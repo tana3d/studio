@@ -17,7 +17,7 @@
     "check": "tsc --noEmit",
     "test": "node --test editor/*.test.mjs tests/*.test.mjs",
     "test:ui": "node tests/studio-ui.mjs",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.3.0",

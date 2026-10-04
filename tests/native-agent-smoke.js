@@ -7,6 +7,7 @@
   const publish = report => window.__TAURI__.core.invoke('native_smoke_report', { report });
   let report = { native: !!window.__TAURI_INTERNALS__ };
   try {
+    await publish({ ...report, state: 'loading_scene' });
     let frame;
     for (let i = 0; i < 300; i++) {
       frame = document.querySelector('iframe')?.contentWindow;
@@ -18,11 +19,14 @@
     for (let i = 0; i < 300; i++) {
       const status = await window.__TAURI__.core.invoke('chatgpt_status');
       signedIn = status.status === 'signed_in';
+      if (signedIn && i === 0) await publish({ ...report, state: 'loading_models' });
+      if (signedIn && document.querySelector('.error')?.textContent) throw new Error(document.querySelector('.error').textContent);
       if (signedIn && document.querySelector('select[aria-label="ChatGPT model"]')?.value) break;
       if (!signedIn && i === 0) await publish({ ...report, state: 'needs_sign_in', message: 'Sign in with ChatGPT in Studio to run the real cone test.' });
       await delay(1000);
     }
     if (!signedIn) { await publish({ ...report, state: 'needs_sign_in', ok: false }); return; }
+    await delay(300); // Let React publish the model/account state to the test entry point.
     const scene = frame.__scene, studio = frame.__studio;
     const before = {
       ids: scene.environment.props.map(p => p.id),
@@ -31,6 +35,10 @@
     };
     await publish({ ...report, state: 'running' });
     const activities = await window.studioTestAgent('Add exactly one traffic cone from the library in the camera foreground. Use the Rixse place_asset action to put it in the current scene. Leave all existing objects, cameras and performances intact.');
+    await delay(300);
+    report.activities = activities ?? null;
+    report.uiError = document.querySelector('.error')?.textContent ?? '';
+    report.reply = [...document.querySelectorAll('.message.assistant .content')].map(e => e.textContent).join('\n');
     const additions = scene.environment.props.filter(p => !before.ids.includes(p.id));
     const edited = activities?.find(a => a.name === 'apply_action' && a.args.type === 'place_asset' && a.result.ok);
     if (!edited || additions.length !== 1 || additions[0].type !== 'cone') throw new Error('The real agent did not add exactly one cone. ' + (document.querySelector('.error')?.textContent ?? ''));

@@ -24,7 +24,7 @@ CARGO_TARGET_DIR="$PWD/.target" CARGO_BUILD_JOBS=2 cargo test --locked --manifes
 CARGO_TARGET_DIR="$PWD/.target" CARGO_BUILD_JOBS=2 cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-Build distributables with `npm run tauri -- build`. Artifacts land in `.target/release/bundle` when using the target directory above. macOS builds are not yet signed or notarized for distribution. Automatic updates are disabled until Tana has its own release service.
+Build distributables with `npm run tauri -- build`. Artifacts land in `.target/release/bundle` when using the target directory above. macOS development launches sign and verify the native binary with the configured Developer ID Application identity before it accesses Keychain, including after Rust rebuilds. Override `APPLE_SIGNING_IDENTITY` on another developer machine. Release bundles use the same identity; notarization is not configured yet. Account-status checks use saved metadata and never read credentials; token use accesses Keychain only when needed. Automatic updates are disabled until Tana has its own release service.
 
 To smoke-test the actual OS webview, create `.tmp` and launch dev mode with `STUDIO_SMOKE_REPORT="$PWD/.tmp/native-smoke.json"`. This opt-in debug test loads the scene and exports/decodes a short video without signing in or calling a model. Close the test app afterward and launch normal dev mode for a fresh scene.
 

@@ -647,7 +647,10 @@ impl ChatGptState {
 
     pub fn view(&self) -> View {
         let inner = self.inner.lock().unwrap();
-        let signed_in = inner.saved.client_id.is_some() && matches!(read_refresh(), Ok(Some(_)));
+        // Account status is non-secret metadata. Reading the credential vault
+        // here prompted on every status notification/test poll in debug builds.
+        // Actual token use checks the vault lazily and handles missing tokens.
+        let signed_in = inner.saved.client_id.is_some();
         View {
             status: if inner.pending.is_some() {
                 Status::Pending
@@ -826,7 +829,14 @@ impl ChatGptState {
         };
         let signed_out = || "Continue with ChatGPT to connect your plan.".to_string();
         let client_id = client_id.ok_or_else(signed_out)?;
-        let refresh = read_refresh()?.ok_or_else(signed_out)?;
+        let refresh = match read_refresh()? {
+            Some(refresh) => refresh,
+            None => {
+                self.forget()?;
+                self.notify();
+                return Err(signed_out());
+            }
+        };
         let response = self
             .client
             .post(TOKEN)
