@@ -1,5 +1,6 @@
 mod chatgpt;
 mod collection;
+mod deep_links;
 mod export;
 mod library;
 mod loopback;
@@ -21,6 +22,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +37,8 @@ pub fn run() {
             export::save_export,
             library::library_list,
             library::library_catalog,
+            library::library_catalog_asset,
+            deep_links::catalog_take_download_links,
             library::library_download,
             library::library_import,
             model_import::library_pick_import,
@@ -49,6 +53,13 @@ pub fn run() {
             native_smoke::native_smoke_report,
         ])
         .on_page_load(|_webview, _payload| {
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && _webview.label() == "catalog"
+                && std::env::var_os("STUDIO_LINK_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-link-smoke.js"));
+            }
             #[cfg(debug_assertions)]
             if _payload.event() == tauri::webview::PageLoadEvent::Finished
                 && std::env::var_os("STUDIO_PACKAGE_SMOKE_REPORT").is_some()
@@ -101,6 +112,7 @@ pub fn run() {
         .setup(|app| {
             // No tray, global shortcuts, file crawler, or background index.
             app.manage(Arc::new(ChatGptState::new(app.handle().clone())?));
+            deep_links::setup(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())

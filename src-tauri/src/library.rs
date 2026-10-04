@@ -312,6 +312,23 @@ pub async fn library_catalog(q: String, category: String, page: u32) -> Result<V
     })
     .await
 }
+#[tauri::command]
+pub async fn library_catalog_asset(id: String) -> Result<Value, String> {
+    valid_id(&id)?;
+    background(move || {
+        let asset: Value = serde_json::from_slice(&fetch(
+            &client()?,
+            &format!("/api/assets/{id}"),
+            256 * 1024,
+        )?)
+        .map_err(|_| "Could not read this catalog asset.")?;
+        if text(&asset, "id")? != id {
+            return Err("Catalog asset does not match the link.".into());
+        }
+        Ok(asset)
+    })
+    .await
+}
 fn download_file(
     client: &reqwest::blocking::Client,
     id: &str,

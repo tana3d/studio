@@ -4,4 +4,4 @@ const catalog=createCatalog({
   notice:message=>document.getElementById('catalog-status').textContent=message,
 });
 window.studioCatalog=catalog;
-void catalog.collect().then(()=>catalog.refresh()).catch(error=>document.getElementById('catalog-status').textContent=String(error));
+void catalog.collect().then(()=>catalog.refresh()).then(()=>catalog.acceptLinks()).catch(error=>document.getElementById('catalog-status').textContent=String(error));

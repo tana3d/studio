@@ -95,3 +95,9 @@ The desktop shell and ChatGPT provider are derived from [zegadb/studio](https://
 Apache-2.0 for the desktop shell; the imported editor is MIT (see [editor/LICENSE](editor/LICENSE)). Third-party models and fonts retain their licenses. See [NOTICE](NOTICE) and [model attribution](editor/assets/ATTRIBUTION.md).
 
 Catalog Blender files and ZIPs download unchanged, then convert locally with the bundled runtime. The library card shows download percentage, extraction, conversion and saving. Conversion progress is indeterminate because Blender cannot report a reliable percentage. The original source package, converted GLB and source credits stay together in Documents/TanaStudio/Library. Failed conversions never appear as ready; retry keeps the catalog metadata and attribution.
+
+## Website links
+
+**Add to Studio** on a tana.gg asset page opens `tanastudio://download/<asset-id>`. Studio opens the library window on that asset and downloads/converts it using the same collection flow. Links work when Studio is running or starts from the link; pending requests wait for the library window to initialize. Repeated requests reuse saved models. Only published Tana catalog IDs are accepted; links cannot supply local paths, outside download URLs or scene-editing commands.
+
+The desktop installer registers the `tanastudio` scheme. On macOS, the signed development runner creates and registers an isolated `Studio Dev.app` bundle so website links can also target development mode on port 1420.

@@ -13,7 +13,7 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
   const $ = id => document.getElementById(id), dialog = $('catalog-dialog');
   const saved = new Map(); let page = 1, pages = 1, request = 0, timer, openedBy, fingerprint='';
   const downloads = new Map(), buttonUpdates = new Map(), progress = new Map();
-  let progressSubscription=Promise.resolve();
+  let progressSubscription=Promise.resolve(),linksSubscription=Promise.resolve(),linksReady=false,linkQueue=Promise.resolve();
   const status = message => { $('catalog-status').textContent = message; };
   const link = (label, url) => {
     const a = document.createElement('a'); a.textContent = label;
@@ -38,12 +38,12 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
     }).catch(error=>{progress.set(id,{stage:'error',label:String(error)});throw error;}).finally(() => {downloads.delete(id);buttonUpdates.get(id)?.();});
     downloads.set(id,pending);return pending;
   }
-  async function load({quiet=false}={}) {
+  async function load({quiet=false,asset=null}={}) {
     const revision = ++request;if(!quiet){status('Loading the library…'); $('catalog-grid').setAttribute('aria-busy','true');
     $('catalog-prev').disabled=true; $('catalog-next').disabled=true;}
     const q=$('catalog-search').value.trim(),category=$('catalog-category').value;
     try {
-      const data = libraryNative ? await libraryNative.invoke('library_catalog',{q,category,page}) : await (async () => {
+      const data = asset ? {assets:[asset],total:1,page:1,pages:1} : libraryNative ? await libraryNative.invoke('library_catalog',{q,category,page}) : await (async () => {
         const params=new URLSearchParams({q,category,page:String(page),limit:'24'});
         const response=await fetch(`https://tana.gg/api/assets?${params}`);
         if(!response.ok)throw new Error('The library is unavailable. Please try again.');return response.json();
@@ -81,6 +81,23 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
     } catch(error){if(revision===request&&!quiet){status(error.message??String(error));$('catalog-grid').replaceChildren();}}
     finally{if(revision===request)$('catalog-grid').setAttribute('aria-busy','false');}
   }
+  function processLinks(){
+    if(!standalone||!libraryNative||!linksReady)return Promise.resolve();
+    linkQueue=linkQueue.then(async()=>{
+      const ids=await libraryNative.invoke('catalog_take_download_links');
+      for(const id of ids){
+        try{
+          const asset=await libraryNative.invoke('library_catalog_asset',{id});
+          page=1;$('catalog-search').value=asset.name;$('catalog-category').value='';
+          await load({asset});
+          const pending=download(id);buttonUpdates.get(id)?.();
+          await pending;status(`${asset.name} added to your collection.`);
+        }catch(error){status(`Could not add this asset: ${error.message??error}`);}
+      }
+    }).catch(error=>status(`Could not open the asset link: ${error.message??error}`));
+    return linkQueue;
+  }
+  async function acceptLinks(){await linksSubscription;linksReady=true;return processLinks();}
   const size=(width,height,left,top)=>{
     const vw=window.innerWidth,vh=window.innerHeight;
     left=Math.max(16,Math.min(left,vw-536));top=Math.max(16,Math.min(top,vh-436));
@@ -127,6 +144,10 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
   window.addEventListener('pagehide',()=>clearInterval(polling),{once:true});
   const events=window.parent.__TAURI__?.event;
   if(events){
+    if(standalone){
+      linksSubscription=events.listen('catalog-download-requested',()=>void processLinks());
+      window.addEventListener('pagehide',()=>void linksSubscription.then(unlisten=>unlisten()).catch(()=>{}),{once:true});
+    }
     progressSubscription=events.listen('library-download-progress',event=>{
       const state=event.payload;if(!state||typeof state.id!=='string')return;
       progress.set(state.id,state);buttonUpdates.get(state.id)?.();
@@ -138,5 +159,5 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
     void stop.catch(error=>notice(`Library updates unavailable: ${error}`));
     if(standalone){const refreshStop=events.listen('catalog-refresh',refreshVisible);void refreshStop.catch(error=>notice(`Library refresh unavailable: ${error}`));window.addEventListener('pagehide',()=>void refreshStop.then(unlisten=>unlisten()).catch(()=>{}),{once:true});}
   }
-  return { saved, collect, download, refresh:load, open };
+  return { saved, collect, download, refresh:load, open, acceptLinks };
 }

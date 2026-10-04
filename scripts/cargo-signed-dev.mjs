@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, cpSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // Tauri's runner receives cargo run arguments. Build first, sign with a stable
@@ -37,4 +37,20 @@ process.stderr.write('Studio development binary signed and verified.\n');
 // Tauri must own the native PID. A child left behind when the runner is
 // killed during rebuild makes single-instance reject the next launch.
 if (typeof process.execve !== 'function') throw new Error('Studio development requires Node.js 24 or newer.');
-process.execve(binary, [binary, ...appArgs], process.env);
+// Launch Services needs an app bundle to deliver macOS URL-open events.
+// Keep the development bundle in this checkout's isolated target directory;
+// it runs the same signed debug build and keeps the normal dev server.
+const bundle=join(metadata.target_directory,profile,'bundle','macos','Studio Dev.app');
+const contents=join(bundle,'Contents'), executable=join(contents,'MacOS','tana-studio');
+mkdirSync(join(contents,'MacOS'),{recursive:true});mkdirSync(join(contents,'Resources'),{recursive:true});
+cpSync(binary,executable);cpSync(join(rootDirectory(),'src-tauri/icons/icon.icns'),join(contents,'Resources','icon.icns'));
+const xml=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+const schemes=config.plugins?.['deep-link']?.desktop?.schemes??[];
+writeFileSync(join(contents,'Info.plist'),`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>${xml(config.identifier)}</string><key>CFBundleName</key><string>Studio Dev</string><key>CFBundleDisplayName</key><string>Studio Dev</string><key>CFBundleExecutable</key><string>tana-studio</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>${xml(config.version)}</string><key>CFBundleShortVersionString</key><string>${xml(config.version)}</string><key>CFBundleIconFile</key><string>icon.icns</string><key>NSHighResolutionCapable</key><true/><key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>${xml(config.identifier)}</string><key>CFBundleURLSchemes</key><array>${schemes.map(s=>`<string>${xml(s)}</string>`).join('')}</array></dict></array></dict></plist>`);
+run('/usr/bin/codesign',['--force','--sign',identity,'--identifier',config.identifier,'--timestamp=none',bundle]);
+run('/usr/bin/codesign',['--verify','--strict',bundle]);
+run('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister',['-f',bundle]);
+process.execve(executable,[executable,...appArgs],process.env);
+function rootDirectory(){return fileURLToPath(new URL('../',import.meta.url));}
