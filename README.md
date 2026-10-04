@@ -4,6 +4,14 @@ Build worlds, direct character performances, arrange camera angles, and export y
 
 Studio combines a local Three.js scene editor with a ChatGPT conversation in a Tauri desktop app. Chat starts at one quarter of the window. Drag the divider to resize it, or use the drawer icon to collapse and reopen it. Resizing and collapsing keep your scene and conversation intact. The editor is bundled into the app and works without a separate server.
 
+## Personal asset collection
+
+Open **Library → Browse Tana library** to search the tana.gg catalog, browse categories, and add models to your collection. Each card links to its creator and open licence and shows its download count. The desktop browser opens in a separate resizable window, so you can browse beside your scene. Downloads automatically update the main Library panel. In the web preview, drag the modal’s bottom-right corner to resize it; the header and navigation stay visible as models scroll. Downloading adds a model to the local Library panel; choose it there to place it in the scene. The library has Objects, Characters and Scenes. Characters show their animation count. Loading a Scene keeps its metre scale and turns its mesh pieces into editable objects. It replaces scenery while keeping characters, cameras and performances; Undo restores the previous set. Import rigged actors through Characters.
+
+Models you download or import are saved in **Documents/TanaStudio/Library/<asset-id>/**. Personal metadata is stored by an embedded, revision-pinned Zega graph in `Library/.zega/`, with no separate database process. Startup migrates existing manifests and recovers completed downloads missing a metadata commit. Each portable asset folder contains `model.glb` and a backup `asset.json`; catalog downloads also include `preview` and `SOURCE.txt` with source and licence credits. **Show folder** opens the collection. Files remain available after restarting, and saved models and thumbnails work offline. Startup restores metadata; model geometry loads only when you place an asset. Downloads finish before appearing in the collection and repeated downloads reuse the saved copy. Undo changes your scene while preserving your downloaded collection. Scene ZIP exports retain the source metadata of included catalog models.
+
+The browser preview can browse the public catalog; saving to this collection requires the desktop app. GLBs must embed their textures and buffers and be at most 50 MB. Scenes and recordings still need a scene ZIP export before closing.
+
 ## Development
 
 Requires Node.js 24+, Rust 1.96, and the platform's Tauri build prerequisites.
@@ -28,6 +36,8 @@ Build distributables with `npm run tauri -- build`. Artifacts land in `.target/r
 
 To smoke-test the actual OS webview, create `.tmp` and launch dev mode with `STUDIO_SMOKE_REPORT="$PWD/.tmp/native-smoke.json"`. This opt-in debug test loads the scene and exports/decodes a short video without signing in or calling a model. Close the test app afterward and launch normal dev mode for a fresh scene.
 
+To verify the catalog in the actual native webview, launch dev with both `STUDIO_LIBRARY_SMOKE_REPORT="$PWD/.tmp/native-library.json"` and `STUDIO_CATALOG_SMOKE_REPORT="$PWD/.tmp/native-catalog.json"`. This opt-in test downloads the CC0 ukulele if needed, saves it in the normal collection, renders it, and checks undo/redo, downloads through the separate catalog window and checks that the main Library updates, then records and rewinds a robot wave. Launching it again exercises restoration of the saved copy without downloading. It does not sign in or call a model.
+
 To test a real agent edit, launch dev mode with `STUDIO_AGENT_SMOKE_REPORT="$PWD/.tmp/native-agent.json"` and sign in with ChatGPT in Studio. This explicitly opt-in test uses your selected model to add one traffic cone through Rixse, verifies that existing objects/cameras/performances remain intact, and leaves the cone visible. It consumes your ChatGPT plan usage. The browser integration test uses a provider fixture and does not call a model.
 
 ## What is included
@@ -38,7 +48,7 @@ To test a real agent edit, launch dev mode with `STUDIO_AGENT_SMOKE_REPORT="$PWD
 - Native save dialogs for footage and scene ZIP exports. Unzip scene exports to get the footage folder.
 - Sign in with ChatGPT, dynamically supplied model choices, streaming conversation, Stop and New chat.
 - Automatic Rixse scene context and asset library metadata whenever the agent works. The current camera view is sent separately as a JPEG capped at 1024 pixels on its longest side. Object selection and projected screen positions connect references like “this light” to stable scene handles. Named anchors (camera foreground, near the selected character, alley center) and exact metre coordinates support placement without requiring markers.
-- Typed Rixse actions to add library props/characters and move/delete props, with validation, collision checks, author attribution and global Undo/Redo. Mesh buffers, animation frames and local file contents stay local.
+- Typed Rixse actions to add library props/characters, load editable scene sets and move/delete props, with validation, collision checks, author attribution and global Undo/Redo. Mesh buffers, animation frames and local file contents stay local.
 
 The inherited desktop search UI, menu-bar/tray app, global shortcuts, file crawler/index, Deka runtime, app generation, terminal, and Zega account/update services have been removed. The scene editor retains its movement and editing controls. See [editor controls and details](docs/editor.md).
 

@@ -1,5 +1,7 @@
 mod chatgpt;
+mod collection;
 mod export;
+mod library;
 mod loopback;
 mod native_smoke;
 mod scene_tools;
@@ -30,6 +32,17 @@ pub fn run() {
             chatgpt::chatgpt_stop,
             chatgpt::chatgpt_usage,
             export::save_export,
+            library::library_list,
+            library::library_catalog,
+            library::library_download,
+            library::library_import,
+            library::library_read,
+            library::library_measure,
+            library::library_open_folder,
+            library::library_preview,
+            library::library_open_link,
+            library::library_open_browser,
+            library::library_close_browser,
             native_smoke::native_smoke_report,
         ])
         .on_page_load(|_webview, _payload| {
@@ -46,6 +59,27 @@ pub fn run() {
                 && std::env::var_os("STUDIO_AGENT_SMOKE_REPORT").is_some()
             {
                 let _ = _webview.eval(include_str!("../../tests/native-agent-smoke.js"));
+            }
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && _webview.label() == "main"
+                && std::env::var_os("STUDIO_LIBRARY_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-library-smoke.js"));
+            }
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && _webview.label() == "catalog"
+                && std::env::var_os("STUDIO_CATALOG_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-catalog-smoke.js"));
+            }
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(catalog) = window.app_handle().get_webview_window("catalog") {
+                    let _ = catalog.close();
+                }
             }
         })
         .setup(|app| {

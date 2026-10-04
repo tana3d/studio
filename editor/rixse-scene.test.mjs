@@ -49,3 +49,12 @@ test('Rixse rejects malformed, occupied and stale entity actions without project
   assert.equal((await f.bridge.dispatch({ type: 'move_prop', payload: { object_id: 'cone-1', x: 1, y: 0, z: 2 } })).ok, false);
   assert.equal(f.state().objects.length, 0);
 });
+
+test('starting sets use an explicit action, and an ordinary object cannot replace scenery',async()=>{
+ const state={library:[{id:'set',category:'scenes',name:'Village'},{id:'chair',category:'props',name:'Chair'}],objects:[],characters:[],anchors:{}};
+ let projected;
+ const bridge=createSceneBridge({read:()=>state,clear:()=>()=>true,project:operation=>{projected=operation;}});
+ assert.equal((await bridge.dispatch({type:'use_scene',payload:{asset_id:'chair'}})).ok,false);assert.equal(projected,undefined);
+ assert.equal((await bridge.dispatch({type:'place_asset',payload:{asset_id:'set',x:0,y:0,z:0}})).ok,false);
+ const result=await bridge.dispatch({type:'use_scene',payload:{asset_id:'set'}});assert.equal(result.ok,true);assert.equal(projected.type,'use_scene');assert.equal(projected.asset.id,'set');
+});

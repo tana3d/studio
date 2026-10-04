@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { editableScene } from './scenes.js';
 import { characterAssets, createActor, animateActor, poseActor, importModel, normalizedModel, blendLayers } from './characters.js';
 import { CameraTimeline } from './camera-timeline.mjs';
 import { CameraTransitions } from './camera-transitions.js';
@@ -7,6 +8,7 @@ import { EditHistory } from './history.mjs';
 import { extraAssets, buildExtra } from './props-extra.js';
 import { zipSync, strToU8 } from 'fflate';
 import './desktop.js';
+import { createCatalog, libraryNative, bufferBase64, modelFile } from './catalog.js';
 import { resolvePlacement } from './agent-placement.mjs';
 import { createSceneBridge } from './rixse-scene.mjs';
 
@@ -260,7 +262,8 @@ function updateSpec(rec) {
   if (rec.spec.wall) rec.spec.normal = [Math.sin(rec.baseRotY), 0, Math.cos(rec.baseRotY)];
 }
 function validAt(x, z, w, d, elev, h, ignore = [], checkWalls = true) {
-  if ((checkWalls && Math.abs(x) > 4.2 - w / 2) || z < -39 + d / 2 || z > 7.4 - d / 2) return false;
+  const [min,max]=worldBounds();
+  if ((checkWalls && (x<min[0]+w/2||x>max[0]-w/2)) || z<min[1]+d/2 || z>max[1]-d/2) return false;
   if (h === 0) return true;  // flat/hanging things never block
   return !colliders.some(c =>
     !ignore.includes(c) &&
@@ -320,10 +323,22 @@ const moon = new THREE.DirectionalLight(0x4a5a80, 1.0);
 moon.position.set(-6, 14, 4);
 scene.add(moon);
 
-SCENE.environment.buildings.forEach(b => buildBuildings(scene, b));
+const setBackground=new THREE.Group();scene.add(setBackground);
+SCENE.environment.buildings.forEach(b => buildBuildings(setBackground, b));
 SCENE.environment.props.forEach(p => addProp(p));
-const rain = SCENE.environment.rain ? buildRain(scene, SCENE.environment.rain) : null;
+const rain = SCENE.environment.rain ? buildRain(setBackground, SCENE.environment.rain) : null;
 
+function worldBounds(){return SCENE.environment.bounds??[[-4.2,-39],[4.2,7.4]];}
+function syncSetBackground(){
+  const custom=SCENE.environment.customSet??false;setBackground.visible=!custom;
+  scene.background=new THREE.Color(custom?'#a6b8ba':SCENE.environment.sky);
+  scene.fog=new THREE.FogExp2(new THREE.Color(custom?'#a6b8ba':SCENE.environment.fog.color),custom ? .003 : SCENE.environment.fog.density);
+  const [min,max]=worldBounds(),width=custom?max[0]-min[0]:g.width,length=custom?max[1]-min[1]:g.length;
+  ground.geometry.dispose();ground.geometry=new THREE.PlaneGeometry(width,length);
+  ground.position.set(custom?(min[0]+max[0])/2:g.center[0],custom?-.02:g.center[1],custom?(min[1]+max[1])/2:g.center[2]);
+  ground.material.color.set(custom?'#7d8980':g.color);
+  moon.color.set(custom?'#ffffff':'#4a5a80');moon.intensity=custom?2:1;
+}
 // ---------- characters ----------
 const actors = {};
 let controlled = null;
@@ -350,7 +365,7 @@ let selected = null;
 const keys = {};
 const movementCodes = ['KeyW','KeyA','KeyS','KeyD'];
 addEventListener('keydown', e => {
-  if ($('shot-insert-dialog').open||$('export-dialog').open) return;
+  if ($('catalog-dialog').open||$('shot-insert-dialog').open||$('export-dialog').open) return;
   if (!$('preview-window').hidden) {
     if(e.code==='Escape'){e.preventDefault();closePreview();}
     return;
@@ -577,7 +592,7 @@ function select(rec) {
 }
 
 function rotateProp(rec, delta) {
-  const before=propBounds(rec),wall=before.min.x< -4.49?-4.5:before.max.x>4.49?4.5:null;
+  const before=propBounds(rec),wall=SCENE.environment.customSet?null:before.min.x< -4.49?-4.5:before.max.x>4.49?4.5:null;
   rec.rotY += delta;
   rec.group.rotation.y = rec.baseRotY + rec.rotY;
   if(wall!==null){flushToWall(rec,wall);if(drag?.rec===rec)drag.pos=[rec.group.position.x,rec.group.position.z];}
@@ -599,7 +614,7 @@ function revalidate(rec) {
   if (!drag || drag.rec !== rec) return;
   const [w, d] = rotatedFootprint(rec);
   const bounds=propBounds(rec);
-  const ok = bounds.min.x>=-4.501 && bounds.max.x<=4.501 && validAt(drag.pos[0], drag.pos[1], w, d, rec.elev, PROP_HEIGHTS[rec.spec.type] ?? 0.7, rec.colliders,false);
+  const ok = bounds.min.x>=worldBounds()[0][0]-.301 && bounds.max.x<=worldBounds()[1][0]+.301 && validAt(drag.pos[0], drag.pos[1], w, d, rec.elev, PROP_HEIGHTS[rec.spec.type] ?? 0.7, rec.colliders,false);
   drag.valid = ok;
   setTint(rec, ok ? 'sel' : 'bad');
   window.__ghost = { valid: ok, x: drag.pos[0], z: drag.pos[1], elev: rec.elev, rotY: rec.rotY };
@@ -619,7 +634,7 @@ function moveGhost(e) {
   drag.lastMouse = [e.clientX, e.clientY];
   if (drag.kind === 'cam') {
     const pt = surfacePoint(e.clientX, e.clientY); if (!pt) return;
-    translateCamera(rec, [THREE.MathUtils.clamp(pt.x, -4, 4), rec.spec.position[1], THREE.MathUtils.clamp(pt.z, -38.5, 7)]);
+    translateCamera(rec, [THREE.MathUtils.clamp(pt.x,worldBounds()[0][0]+.2,worldBounds()[1][0]-.2),rec.spec.position[1],THREE.MathUtils.clamp(pt.z,worldBounds()[0][1]+.2,worldBounds()[1][1]-.2)]);
     return;
   }
   const pt=surfacePoint(e.clientX,e.clientY);if(!pt)return;
@@ -640,7 +655,7 @@ function moveGhost(e) {
   const bounds=propBounds(rec),side=pt.x<0?-1:1;
   const edge=side<0?bounds.min.x:bounds.max.x;
   if(pt.onWall&&Math.abs(pt.normal[0])>.9)flushToWall(rec,pt.x);
-  else if(snapOn&&Math.abs(edge-side*4.5)<.5)flushToWall(rec,side*4.5);
+  else if(!SCENE.environment.customSet&&snapOn&&Math.abs(edge-side*4.5)<.5)flushToWall(rec,side*4.5);
   drag.pos=[rec.group.position.x,rec.group.position.z];
   revalidate(rec);
 }
@@ -966,23 +981,38 @@ const propAssets = [...extraAssets,
   { id: 'crate', name: 'Wooden crate', icon: '▧', detail: 'Stackable prop' },
   { id: 'puddle', name: 'Puddle', icon: '◌', detail: 'Ground detail' },
 ];
+const sceneAssets=[];
 let libraryTab = 'props';
 function renderLibrary() {
   const list = $('asset-list'); list.replaceChildren();
   const query = $('asset-search').value.toLowerCase();
-  const assets = libraryTab === 'props' ? propAssets : characterAssets;
-  for (const asset of assets.filter(a => `${a.name} ${a.detail}`.toLowerCase().includes(query))) {
+  const assets = libraryTab==='characters'?characterAssets:libraryTab==='scenes'?sceneAssets:propAssets.filter(a=>a.category!=='scenes');
+  for (const asset of assets.filter(a => `${a.name} ${a.detail} ${(a.tags??[]).join(' ')}`.toLowerCase().includes(query))) {
     const button = document.createElement('button'); button.className = 'asset'; button.dataset.asset = asset.id;
     const icon = document.createElement('span'); icon.className = 'icon'; icon.textContent = asset.icon;
     const name = document.createElement('strong'); name.textContent = asset.name;
     const detail = document.createElement('small'); detail.textContent = asset.detail;
+    if (asset.catalog?.poster_key || asset.catalog?.preview_key) {
+      const image=document.createElement('img');image.alt='';image.loading='lazy';
+      if(libraryNative){
+        void libraryNative.invoke('library_preview',{id:asset.id}).then(data=>{if(data){image.src=data;icon.replaceChildren(image);}}).catch(()=>{});
+      }else{
+        image.src='https://tana.gg/media/'+(asset.catalog.poster_key||asset.catalog.preview_key).split('/').map(encodeURIComponent).join('/');
+        image.onerror=()=>icon.textContent=asset.icon;icon.replaceChildren(image);
+      }
+    }
     button.append(icon, name, detail);
     button.onclick = async () => {
       if (libraryTab === 'characters' ? !canLoadAssets() : !canEditWorld()) {
         hint(libraryTab === 'characters' ? 'Finish the recording or current edit before adding a character.' : 'Return to live before placing objects.'); return;
       }
       if(drag?.placing)cancelPlacement();else if(drag)return;
-      ctxPoint = { x: THREE.MathUtils.clamp(camera.position.x,-4,4), y: 0, z: THREE.MathUtils.clamp(camera.position.z - 4,-36,5), onWall: false };
+      button.disabled = true;
+      try { await hydrateAsset(asset); } catch(error) { hint(`Could not load ${asset.name}: ${error.message??error}`);button.disabled=false;return; }
+      button.disabled=false;
+      if(libraryTab==='scenes'){useSceneAsset(asset);return;}
+      const [min,max]=worldBounds();
+      ctxPoint = { x: THREE.MathUtils.clamp(camera.position.x,min[0]+.5,max[0]-.5), y: 0, z: THREE.MathUtils.clamp(camera.position.z-4,min[1]+.5,max[1]-.5), onWall: false };
       if (libraryTab === 'props') { startPlacement(asset.id); return; }
       button.disabled = true;
       try {
@@ -1023,24 +1053,76 @@ $('model-file').onchange = async e => {
   prepareAssetEdit();
   history.begin('Import model'); const category = libraryTab; loadingModels++; $('import-model').disabled = true;
   try {
-    const asset = await importModel(file, `import-${++importSequence}`);
-    asset.category = category;
-    importedAssets.push(asset);
-    if (category === 'characters') characterAssets.push(asset);
-    else {
-      const template = normalizedModel(asset.gltf, 1.2);
-      const size = new THREE.Box3().setFromObject(template).getSize(new THREE.Vector3());
-      FOOTPRINTS[asset.id] = [size.x, size.z]; PROP_HEIGHTS[asset.id] = size.y; PROP_DEFAULTS[asset.id] = {};
-      PROP_BUILDERS[asset.id] = (parent, spec) => {
-        const model = normalizedModel(asset.gltf, 1.2); model.position.add(new THREE.Vector3(...spec.position)); parent.add(model);
-        collider(spec.position[0], spec.position[2], size.x, size.z);
-      };
-      propAssets.push(asset);
+    let asset;
+    if(libraryNative){
+      const loaded=await importModel(file,`import-${++importSequence}`);
+      const saved=await libraryNative.invoke('library_import',{name:file.name,category,data:bufferBase64(loaded.buffer)});
+      asset=registerSavedAsset(saved);Object.assign(asset,{buffer:loaded.buffer,gltf:loaded.gltf});registerLoadedAsset(asset);
+      if(category==='props')await libraryNative.invoke('library_measure',{id:asset.id,footprint:FOOTPRINTS[asset.id],height:PROP_HEIGHTS[asset.id]});
+    }else{
+      asset=await importModel(file,`import-${++importSequence}`);asset.category=category;registerLoadedAsset(asset);
     }
     renderLibrary(); history.commit(); hint(`${asset.name} is ready in the library.`);
   } catch (error) { history.discard(); hint(`Import failed: ${error.message}`); }
   finally { loadingModels--; $('import-model').disabled = false; e.target.value = ''; }
 };
+// Metadata is cheap to restore. GLBs are read only when an asset is used.
+const personalAssets=new Map();
+function registerLoadedAsset(asset){
+  if(!importedAssets.some(a=>a.id===asset.id))importedAssets.push(asset);
+  if(asset.category==='scenes'){if(!sceneAssets.some(a=>a.id===asset.id))sceneAssets.push(asset);}
+  else if(asset.category==='characters'){
+    if(!characterAssets.some(a=>a.id===asset.id))characterAssets.push(asset);
+  }else{
+    const template=normalizedModel(asset.gltf,1.2,false);
+    const size=new THREE.Box3().setFromObject(template).getSize(new THREE.Vector3());
+    FOOTPRINTS[asset.id]=[Math.max(size.x,.001),Math.max(size.z,.001)];PROP_HEIGHTS[asset.id]=Math.max(size.y,.001);PROP_DEFAULTS[asset.id]={};
+    PROP_BUILDERS[asset.id]=(parent,spec)=>{
+      const model=normalizedModel(asset.gltf,1.2,false);model.position.add(new THREE.Vector3(...spec.position));parent.add(model);
+      collider(spec.position[0],spec.position[2],size.x,size.z);
+    };
+    if(!propAssets.some(a=>a.id===asset.id))propAssets.push(asset);
+  }
+}
+function registerSavedAsset(saved,render=true){
+  let asset=personalAssets.get(saved.id);
+  if(!asset){
+    asset={...saved,icon:saved.category==='characters'?'◉':saved.category==='scenes'?'▦':'◇',detail:saved.animations.length?`${saved.animations.length} animations · saved`:'Saved to your collection'};
+    personalAssets.set(asset.id,asset);
+    FOOTPRINTS[asset.id]=saved.footprint??[1.2,1.2];PROP_HEIGHTS[asset.id]=saved.height??1.2;
+  }
+  const list=asset.category==='characters'?characterAssets:asset.category==='scenes'?sceneAssets:propAssets;
+  if(!list.some(a=>a.id===asset.id))list.push(asset);
+  if(render)renderLibrary();return asset;
+}
+function useSceneAsset(asset,author='you'){
+  const set=editableScene(asset.gltf,asset.id);
+  for(const piece of set.pieces){
+    FOOTPRINTS[piece.id]=[Math.max(piece.size.x,.001),Math.max(piece.size.z,.001)];PROP_HEIGHTS[piece.id]=piece.walkable?0:Math.max(piece.size.y,.001);PROP_DEFAULTS[piece.id]={};
+    if(!propAssets.some(a=>a.id===piece.id))propAssets.push({id:piece.id,name:piece.name,icon:'▦',detail:`Set piece · ${asset.name}`});
+    PROP_BUILDERS[piece.id]=(parent,spec)=>{const model=piece.model.clone(false);model.material=Array.isArray(piece.model.material)?piece.model.material.map(m=>m.clone()):piece.model.material.clone();model.position.add(new THREE.Vector3(...spec.position));parent.add(model);if(!piece.walkable)collider(spec.position[0],spec.position[2],piece.size.x,piece.size.z);};
+  }
+  history.run('Use scene '+asset.name,()=>{
+    for(const rec of [...props])removeProp(rec);
+    SCENE.environment.customSet=true;SCENE.environment.bounds=set.bounds;
+    SCENE.environment.props=set.pieces.map(piece=>({id:crypto.randomUUID(),type:piece.id,name:piece.name,sourceAsset:asset.id,position:piece.position}));
+    for(const spec of SCENE.environment.props){const rec=addProp(spec);setCollidersAt(rec);}
+    syncSetBackground();enterFreeCamera();freeRig.pos.set(0,4,Math.min(set.bounds[1][1]-1,12));freeRig.yaw=0;freeRig.pitch=-.25;updateCamera();refreshJson();
+  },author);
+  hint(`${asset.name} loaded · ${set.pieces.length} editable pieces · Undo restores your previous set`);
+}
+async function hydrateAsset(asset, countLoading=true){
+  if(!asset||!personalAssets.has(asset.id)||asset.gltf)return;
+  if(asset.loading)return asset.loading;
+  if(countLoading)loadingModels++;
+  asset.loading=(async()=>{
+    const data=await libraryNative.invoke('library_read',{id:asset.id});
+    const loaded=await importModel(modelFile(data,asset.name),asset.id);
+    Object.assign(asset,{buffer:loaded.buffer,gltf:loaded.gltf});registerLoadedAsset(asset);
+    if(asset.category==='props')await libraryNative.invoke('library_measure',{id:asset.id,footprint:FOOTPRINTS[asset.id],height:PROP_HEIGHTS[asset.id]});
+  })().finally(()=>{asset.loading=null;if(countLoading)loadingModels--;});
+  return asset.loading;
+}
 // Timeline clip editing uses metadata copies; recorded frame buffers stay unchanged.
 let clipDrag=null, rulerKey='';
 const canEditTimeline=()=>!recorder&&!loadingModels&&!drag&&!clipDrag&&!shotDrag&&!pendingShot&&timeline.mode!=='recording';
@@ -1522,7 +1604,10 @@ $('export-all').onclick = async () => {
       files[`assets/${name}`] = new Uint8Array(await response.arrayBuffer());
     }));
     for (const take of footage) files[`footage/${take.meta.file}`] = new Uint8Array(await take.blob.arrayBuffer());
-    for (const asset of importedAssets) files[`assets/${asset.id}.glb`] = new Uint8Array(asset.buffer);
+    for (const asset of importedAssets) {
+      files[`assets/${asset.id}.glb`] = new Uint8Array(asset.buffer);
+      if(asset.catalog)files[`assets/${asset.id}.source.json`]=strToU8(JSON.stringify(asset.catalog,null,2));
+    }
     const zipped = zipSync(files, { level: 0 });
     const url = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }));
     const a = document.createElement('a'); a.href = url; a.download = 'studio-scene.zip'; document.body.appendChild(a); a.click(); a.remove();
@@ -1552,6 +1637,7 @@ function restoreEditState(state) {
   Object.keys(keys).forEach(k=>delete keys[k]);look=null;drag=null;selectedCam=null;select(null);window.__ghost=null;
   $('camera-menu').hidden=true;ctxmenu.style.display='none';
   for(const rec of [...props])removeProp(rec);
+  SCENE.environment=cloneData(state.world.environment);syncSetBackground();
   SCENE.environment.props=cloneData(state.world.environment.props);
   SCENE.environment.props.forEach(spec=>{const rec=addProp(spec);setCollidersAt(rec);});
   SCENE.cameras=cloneData(state.world.cameras);SCENE.characters=cloneData(state.world.characters);
@@ -1566,6 +1652,8 @@ function restoreEditState(state) {
   freeRig.pos.fromArray(state.free.position);freeRig.yaw=state.free.yaw;freeRig.pitch=state.free.pitch;
   Object.assign(player,state.player);camIndex=SCENE.cameras.findIndex(c=>c.id===state.cameraId);
   importedAssets.splice(0,importedAssets.length,...state.imports);propAssets.splice(0,propAssets.length,...state.props);characterAssets.splice(0,characterAssets.length,...state.characters);
+  // Undo affects scene edits; saved collection files remain available.
+  for(const asset of personalAssets.values()){registerSavedAsset(asset,false);if(asset.gltf)registerLoadedAsset(asset);}
   timeline.items=[...state.performances];timeline.active=state.active;timeline.base=state.timelineBase;timeline.recording=null;timeline.time=state.time;
   timeline.mode=state.mode==='playing'?'paused':state.mode;
   cameraEdit.shots=cloneData(state.cameraEdit.shots);cameraEdit.end=state.cameraEdit.end;selectedShot=state.selectedShot;previewEdit=state.previewEdit;adjustingShot=false;
@@ -1656,11 +1744,12 @@ function agentAnchors() {
   if (forward.lengthSq() < .01) forward.set(0, 0, -1); else forward.normalize();
   const foreground = camera.position.clone().addScaledVector(forward, 4);
   const anchors = {
-    camera_foreground: { name: 'In front of the current camera', position: [THREE.MathUtils.clamp(foreground.x, -3.5, 3.5), 0, THREE.MathUtils.clamp(foreground.z, -37, 6)] },
+    camera_foreground: { name: 'In front of the current camera', position: [THREE.MathUtils.clamp(foreground.x,worldBounds()[0][0]+.7,worldBounds()[1][0]-.7),0,THREE.MathUtils.clamp(foreground.z,worldBounds()[0][1]+.7,worldBounds()[1][1]-.7)] },
     alley_center: { name: 'Middle of the alley', position: [0, 0, -16] },
     left_wall: { name: 'Near the left wall', position: [-3.6, 0, -14] },
     right_wall: { name: 'Near the right wall', position: [3.6, 0, -14] },
   };
+  if(SCENE.environment.customSet){delete anchors.alley_center;delete anchors.left_wall;delete anchors.right_wall;anchors.scene_center={name:'Middle of the set',position:[0,0,0]};}
   const actor = actors[selectedActor];
   if (actor?.present) anchors.near_character = { name: `Near ${selectedActor}`, position: [actor.group.position.x + 1.2, 0, actor.group.position.z + .8] };
   for (const rec of props) anchors[`object:${rec.spec.id}`] = { name: `At ${rec.spec.type}`, position: rec.group.position.toArray() };
@@ -1668,6 +1757,7 @@ function agentAnchors() {
 }
 function agentLibrary() {
   return [...propAssets.map(asset => ({ id: asset.id, name: asset.name, category: 'props', description: asset.detail, footprint: FOOTPRINTS[asset.id], height: PROP_HEIGHTS[asset.id] ?? .7 })),
+    ...sceneAssets.map(asset=>({id:asset.id,name:asset.name,category:'scenes',description:asset.detail})),
     ...characterAssets.map(asset => ({ id: asset.id, name: asset.name, category: 'characters', description: asset.detail, footprint: [.64, .64], height: 1.85 }))];
 }
 const sceneSnapshot = () => cloneData({
@@ -1676,7 +1766,7 @@ const sceneSnapshot = () => cloneData({
   characters: Object.entries(actors).filter(([, a]) => a.present).map(([name, a]) => ({ name, assetId: a.spec.assetId, position: a.group.position.toArray(), rotationY: a.group.rotation.y })),
   reservedCharacterNames: Object.keys(actors),
   library: agentLibrary(), anchors: agentAnchors(),
-  coordinates: { units: 'metres', axes: 'X across alley; Y up; negative Z deeper into alley', min: [-4.2, 0, -39], max: [4.2, 9, 7.4] },
+  coordinates: { units: 'metres', axes: 'X right; Y up; negative Z forward', min: [worldBounds()[0][0],0,worldBounds()[0][1]], max: [worldBounds()[1][0],9,worldBounds()[1][1]] },
   view: { name: SCENE.cameras[camIndex]?.name ?? 'Free camera', position: camera.position.toArray(), direction: camera.getWorldDirection(new THREE.Vector3()).toArray(), right: new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).toArray() },
   cameras: cameraEdit.shots,
   performances: timeline.items.map(({frames,world,...clip}) => clip),
@@ -1691,10 +1781,14 @@ function agentEditReady() {
   if (!window.__studio.ready || recorder || loadingModels || drag || look || clipDrag || shotDrag || pendingShot || history.pending || timeline.mode === 'recording') throw new Error('Finish the current recording, placement or edit before changing the scene.');
 }
 const rixseScene = createSceneBridge({
+  prepare: async action => {
+    if(['place_asset','use_scene'].includes(action.type)){agentEditReady();await hydrateAsset(personalAssets.get(action.payload?.asset_id));}
+  },
   read: sceneSnapshot,
   clear: (asset, rotation, ignoreId) => agentClear(asset, rotation, props.find(rec => rec.spec.id === ignoreId)?.colliders ?? []),
   project: async ({ type, asset, record }, author) => {
     agentEditReady(); prepareAssetEdit();
+    if(type==='use_scene'){useSceneAsset(sceneAssets.find(a=>a.id===asset.id),author);return;}
     const label = `${author === 'agent' ? 'Agent: ' : ''}${type === 'place_asset' ? 'add ' + asset.name : type === 'move_prop' ? 'move object' : 'delete object'}`;
     if (type === 'delete_prop') {
       const rec = props.find(p => p.spec.id === record.id);
@@ -1720,6 +1814,7 @@ const rixseScene = createSceneBridge({
   },
 });
 window.__studio.rixse = rixseScene;
+window.__studio.useSceneAsset=useSceneAsset;
 window.studioContext = () => {
   const { coordinates, view, cameras, performances, duration, time, mode, videoFrame } = sceneSnapshot();
   const rixse = rixseScene.encode();
@@ -1759,6 +1854,7 @@ window.studioAgent = {
       if (name === 'find_placements') {
         // Resolve the asset handle with the same Rixse parameter vocabulary.
         const resolved = rixseScene.wire.resolve({ type: 'place_asset', payload: { asset_id: args.asset_id, anchor: args.anchor } }, { asset_id: { ref: 'asset' }, anchor: { ref: 'anchor' } }).payload;
+        await hydrateAsset(personalAssets.get(resolved.asset_id));
         const asset = agentLibrary().find(a => a.id === resolved.asset_id); if (!asset) throw new Error('Unknown library asset.');
         const anchors = agentAnchors(), names = resolved.anchor ? [resolved.anchor] : Object.keys(anchors).filter(a => !a.startsWith('object:'));
         const positions = [];
@@ -1772,3 +1868,7 @@ window.studioAgent = {
   },
 };
 window.studioNotice = hint;
+
+const catalog=createCatalog({register:registerSavedAsset,changed:renderLibrary,notice:hint,clearKeys:clearMovementKeys});
+window.__studio.library=catalog;
+void catalog.collect().catch(error=>hint(`Could not restore your collection: ${error.message??error}`));

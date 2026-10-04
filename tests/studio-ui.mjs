@@ -11,6 +11,8 @@ const server = createServer(async (req, res) => {
   if (!path.startsWith(root + '/') && path !== root) { res.writeHead(403).end(); return; }
   try {
     const file = path.endsWith('/') || !extname(path) ? path + '/index.html' : path;
+    if(new URL(req.url,'http://localhost').pathname==='/studio/test-three.js'){res.writeHead(200,{'Content-Type':'text/javascript'}).end(await readFile('node_modules/three/build/three.module.js'));return;}
+    if(new URL(req.url,'http://localhost').pathname==='/studio/three.core.js'){res.writeHead(200,{'Content-Type':'text/javascript'}).end(await readFile('node_modules/three/build/three.core.js'));return;}
     const body = await readFile(file);
     const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.glb': 'model/gltf-binary', '.woff2': 'font/woff2' }[extname(file)];
     res.writeHead(200, { 'Content-Type': mime ?? 'application/octet-stream' }).end(body);
@@ -30,11 +32,29 @@ try {
     window.isTauri = true;
     window.testRequests = [];
     window.testSaves = [];
+    window.testLibrary=new Map();window.testCatalogCalls=[];window.testLibraryReads=0;window.testFolderOpened=false;window.testCatalogWindowOpens=0;
     window.testCallbacks = new Map(); window.testAccountReads = 0;
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     window.__TAURI_INTERNALS__ = {
       transformCallback: callback => { const id = window.testCallbacks.size + 1; window.testCallbacks.set(id, callback); return id; },
       invoke: async (command, args) => {
+        if(command==='library_list')return{root:'/Users/test/Documents/TanaStudio/Library',assets:[...window.testLibrary.values()],skipped:0};
+        if(command==='library_catalog'){
+          window.testCatalogCalls.push(args);
+          const assets=[{id:'fixture-object',downloads:42,name:'Oak Table',category:'props',description:'An oak dining table.',tags:['wood','table','interior'],creator:'Model creator',license:'CC0',source_url:'https://example.com/model',license_url:'https://creativecommons.org/publicdomain/zero/1.0/',model_key:'assets/test/model.glb',poster_key:'assets/test/preview.png',animations:[]}, {id:'fixture-character',name:'Animated Performer',category:'characters',description:'A walking character.',tags:['human','animated'],creator:'Model creator',license:'CC0',source_url:'https://example.com/model',license_url:'https://creativecommons.org/publicdomain/zero/1.0/',poster_key:'assets/test/preview.png',animations:['Walk']}];
+          return {assets:assets.filter(a=>(!args.category||a.category===args.category)&&(!args.q||a.name.toLowerCase().includes(args.q.toLowerCase()))),total:48,page:args.page,pages:2};
+        }
+        if(command==='library_download'){
+          const item={id:args.id,name:args.id==='fixture-object'?'Oak Table':'Animated Performer',category:args.id==='fixture-object'?'props':'characters',tags:['wood'],animations:['Walk'],catalog:{creator:'Model creator',license:'CC0',downloads:43,poster_key:'assets/test/preview.png'}};
+          window.testLibrary.set(item.id,item);return item;
+        }
+        if(command==='library_read'){window.testLibraryReads++;const data=await(await fetch('/studio/assets/performer.glb')).arrayBuffer();let binary='';for(const byte of new Uint8Array(data))binary+=String.fromCharCode(byte);return btoa(binary);}
+        if(command==='library_measure')return;
+        if(command==='library_preview')return null;
+        if(command==='library_open_browser'){window.testCatalogWindowOpens++;return;}
+        if(command==='library_close_browser')return;
+        if(command==='library_import'){const item={id:'fixture-import',name:args.name.replace(/\.glb$/i,''),category:args.category,tags:[],animations:['Walk'],catalog:null};window.testLibrary.set(item.id,item);return item;}
+        if(command==='library_open_folder'){window.testFolderOpened=true;return;}
         if (command === 'plugin:event|listen') { window.testAccountChanged = () => window.testCallbacks.get(args.handler)({ event: 'chatgpt-changed', id: 1, payload: null }); return 1; }
         if (command === 'plugin:event|unlisten') return;
         if (command === 'chatgpt_status') { window.testAccountReads++; return { status: 'signed_in', email: 'test@example.com', error: null }; }
@@ -177,6 +197,79 @@ try {
   assert.ok(Math.abs(await editor.evaluate(() => window.__studio.camera.aspect) - 9 / 16) < 0.001);
   await editor.locator('#undo').click();
   assert.ok(Math.abs(await editor.evaluate(() => window.__studio.camera.aspect) - 16 / 9) < 0.001);
+  await editor.getByRole('tab',{name:'Library',exact:true}).click();
+  await editor.locator('#browse-catalog').click();
+  assert.equal(await page.evaluate(()=>window.testCatalogWindowOpens),1,'Desktop catalog opens a separate window');
+  await editor.evaluate(()=>window.__studio.library.open({separate:false}));
+  await editor.locator('#catalog-grid .catalog-card').first().waitFor();
+  assert.equal(await editor.locator('#catalog-grid .catalog-card').count(),2);
+  assert.equal(await editor.locator('#catalog-grid').getAttribute('aria-busy'),'false');
+  assert.equal(await editor.locator('#catalog-grid').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),4);
+  await editor.locator('.catalog-downloads').filter({hasText:'42 downloads'}).waitFor();
+  const modal=editor.locator('#catalog-dialog'),initialModal=await modal.boundingBox(),handle=await editor.locator('#catalog-resize').boundingBox();
+  assert.ok(initialModal.width>1000,'Catalog starts wider than the old 950px modal');
+  await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();await page.mouse.move(handle.x+handle.width/2-220,handle.y+handle.height/2-160,{steps:8});await page.mouse.up();
+  const resized=await modal.boundingBox();assert.ok(Math.abs(resized.width-(initialModal.width-220))<3);assert.ok(Math.abs(resized.height-(initialModal.height-160))<3);
+  await editor.locator('#catalog-resize').focus();await page.keyboard.press('ArrowRight');assert.ok(Math.abs((await modal.boundingBox()).width-resized.width-32)<3);
+  assert.ok(await editor.locator('.catalog-footer').isVisible(),'Navigation remains visible while resizing');
+  await editor.locator('#catalog-search').fill('Oak');
+  await page.waitForFunction(()=>window.testCatalogCalls.at(-1)?.q==='Oak');
+  await editor.locator('#catalog-grid').getByRole('button',{name:'Add to collection'}).click();
+  await editor.getByRole('button',{name:'In your collection',exact:true}).waitFor();
+  await editor.locator('.catalog-downloads').filter({hasText:'43 downloads'}).waitFor();
+  assert.equal(await page.evaluate(()=>window.testLibraryReads),0,'Downloading registers metadata without loading unused models');
+  await editor.locator('#collection-folder').click();assert.equal(await page.evaluate(()=>window.testFolderOpened),true);
+  await editor.locator('#catalog-search').fill('');
+  await editor.locator('#catalog-category').selectOption('characters');
+  await page.waitForFunction(()=>window.testCatalogCalls.at(-1)?.category==='characters');
+  await editor.getByRole('heading',{name:'Animated Performer',exact:true}).waitFor();
+  assert.equal(await editor.getByRole('heading',{name:'Oak Table',exact:true}).count(),0);
+  await editor.locator('#catalog-next').click();await page.waitForFunction(()=>window.testCatalogCalls.at(-1)?.page===2);
+  await editor.locator('#catalog-category').selectOption('');await editor.getByRole('heading',{name:'Oak Table',exact:true}).waitFor();
+  const cameraBefore=await editor.evaluate(()=>window.__studio.camIndex);
+  await editor.locator('#catalog-next').focus();await page.keyboard.press('f');assert.equal(await editor.evaluate(()=>window.__studio.camIndex),cameraBefore,'Catalog input never moves the camera');
+  await page.keyboard.press('Escape');assert.equal(await editor.locator('#catalog-dialog').isVisible(),false);
+  assert.equal(await editor.locator('#browse-catalog').evaluate(el=>el===document.activeElement),true);
+  const downloaded=await editor.evaluate(()=>window.__studio.rixse.dispatch({type:'place_asset',payload:{asset_id:'fixture-object',anchor:'camera_foreground'}},'you'));
+  assert.equal(downloaded.ok,true);assert.equal(await page.evaluate(()=>window.testLibraryReads),1,'Placement lazily reads the saved GLB');
+  await editor.locator('#undo').click();assert.equal(await editor.locator('#asset-list [data-asset="fixture-object"]').count(),1,'Undo preserves the personal collection');
+  await editor.locator('#redo').click();assert.equal(await page.evaluate(()=>window.testLibraryReads),1,'Redo reuses the loaded model');
+  await editor.locator('#undo').click();
+  await editor.goto(editor.url());await editor.waitForFunction(()=>window.__studio?.library?.saved.has('fixture-object'));
+  assert.equal(await page.evaluate(()=>window.testLibraryReads),1,'Restart restores metadata without eagerly parsing saved models');
+  assert.equal(await editor.locator('#asset-list [data-asset="fixture-object"]').count(),1);
+  await editor.locator('#model-file').setInputFiles('editor/assets/performer.glb');
+  await editor.locator('[data-asset="fixture-import"]').waitFor();
+  assert.equal(await page.evaluate(()=>window.testLibraryReads),1,'User imports validate before saving and do not reread the file');
+  assert.equal(await page.evaluate(()=>window.testLibrary.get('fixture-import').name),'performer','User imports join the persistent collection');
+  // A real animated robot can emote, record it, and replay the same pose.
+  const robot=await editor.evaluate(()=>window.__studio.rixse.dispatch({type:'place_asset',payload:{asset_id:'robot',x:1.8,y:0,z:2}},'you'));
+  assert.equal(robot.ok,true);
+  await editor.getByRole('tab',{name:'Direct the action'}).click();
+  await editor.locator('#record-performance').click();await editor.locator('#gesture-select').selectOption('Wave');
+  await editor.waitForFunction(()=>window.__studio.timeline.time>1.2);
+  await editor.locator('#record-performance').click();
+  const emote=await editor.evaluate(()=>{
+    const actor=window.__studio.actors[document.getElementById('actor-select').value];
+    const bones=()=>{const a=[];actor.group.traverse(o=>{if(o.isBone)a.push(...o.quaternion.toArray());});return a;};
+    window.__studio.timeline.seek(.4);const early=bones();window.__studio.timeline.seek(.9);const later=bones();window.__studio.timeline.seek(.4);const rewind=bones();
+    return {early,later,rewind,frames:window.__studio.timeline.items.at(-1).frames.length};
+  });
+  assert.ok(emote.frames>60);assert.notDeepEqual(emote.early,emote.later,'Wave changes the actual skeletal pose');assert.deepEqual(emote.early,emote.rewind,'Seeking reproduces the emote pose');
+  await editor.locator('#live-mode').click();await editor.getByRole('tab',{name:'Library',exact:true}).click();
+  await editor.locator('[data-tab="scenes"]').click();
+  assert.deepEqual(await editor.locator('#catalog-category option').evaluateAll(options=>options.map(o=>o.value)),['','props','characters','scenes']);
+  // Import a real GLB as a set. Its mesh pieces remain editable and undo restores the entire previous environment.
+  const previousSet=await editor.evaluate(()=>JSON.stringify(window.__scene.environment));
+  // Skinned models belong in Characters; a static set fixture uses a box with actual geometry.
+  const sceneResult=await editor.evaluate(async()=>{
+    const THREE=await import('/studio/test-three.js');
+    const source=new THREE.Group();const box=new THREE.Mesh(new THREE.BoxGeometry(4,3,2),new THREE.MeshStandardMaterial());box.position.set(2,1.5,1);box.name='Set wall';source.add(box);
+    window.__studio.useSceneAsset({id:'test-set',name:'Test set',gltf:{scene:source}});
+    return {custom:window.__scene.environment.customSet,parts:window.__scene.environment.props.length,bounds:window.__scene.environment.bounds};
+  });
+  assert.equal(sceneResult.custom,true);assert.equal(sceneResult.parts,1);assert.ok(sceneResult.bounds[1][0]>=10);
+  await editor.locator('#undo').click();assert.equal(await editor.evaluate(()=>JSON.stringify(window.__scene.environment)),previousSet);
   await mkdir('.tmp', { recursive: true });
   await page.screenshot({ path: '.tmp/studio-desktop.png' });
   await page.setViewportSize({ width: 1100, height: 720 });

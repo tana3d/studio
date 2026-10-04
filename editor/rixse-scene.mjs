@@ -7,7 +7,7 @@ const location = { anchor: str('anchor', true), x: num, y: num, z: num, dx: num,
 
 // The Three.js renderer projects the accepted state. Mesh data stays local;
 // Rixse exposes typed actions and stable handles for the scene's entities.
-export function createSceneBridge({ read, project, clear, id = () => crypto.randomUUID() }) {
+export function createSceneBridge({ read, project, clear, prepare = async () => {}, id = () => crypto.randomUUID() }) {
   const audit = [];
   const reject = message => { throw new Rejected(message); };
   const at = (state, asset, p, ignore) => {
@@ -19,12 +19,22 @@ export function createSceneBridge({ read, project, clear, id = () => crypto.rand
     } catch (error) { reject(error.message); }
   };
   const actions = [
+    defineAction('use_scene', {
+      describe: 'Use a Scenes library asset as the starting set. Replaces scenery with editable pieces; preserves characters, cameras and performances. Undo restores the previous set.',
+      params: {asset_id:str('asset')},
+      apply: (state,p)=>{
+        const asset=state.library.find(a=>a.id===p.asset_id);
+        if(asset?.category!=='scenes')reject('Choose an asset from Scenes.');
+        return {...state,operation:{type:'use_scene',asset},result:{ok:true,assetId:asset.id}};
+      },
+    }),
     defineAction('place_asset', {
       describe: 'Add a library prop or character. Use camera_foreground when no location is specified; anchors find nearby clear space. Exact x/y/z must be unoccupied. Returns the actual position.',
       params: { asset_id: str('asset'), ...location },
       apply: (state, p) => {
         const asset = state.library.find(a => a.id === p.asset_id);
         if (!asset) reject('Unknown library asset.');
+        if(asset.category==='scenes')reject('Use use_scene to load a starting set.');
         const placement = at(state, asset, p);
         const record = { id: id(), assetId: asset.id, ...placement };
         if (asset.category === 'characters') {
@@ -77,8 +87,9 @@ export function createSceneBridge({ read, project, clear, id = () => crypto.rand
     async dispatch(action, author = 'agent') {
       // Each transaction starts at the real current scene, including human
       // movement and Undo. A stale model snapshot cannot overwrite later edits.
+      const resolved = wire.resolve(action, actions.find(a=>a.type===action?.type)?.params ?? {});
+      try { await prepare(resolved); } catch(error) { return {ok:false,error:error.message}; }
       const store = createStore({ initial: read(), actions });
-      const resolved = wire.resolve(action, store.params(action?.type));
       const def = actions.find(a => a.type === resolved?.type);
       if (resolved?.payload && Object.keys(resolved.payload).some(k => !Object.hasOwn(def?.params ?? {}, k))) return { ok: false, error: 'Unknown action field.' };
       const accepted = store.dispatch(resolved, author);

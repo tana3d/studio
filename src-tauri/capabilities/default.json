@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Studio window controls and external ChatGPT sign-in",
   "windows": [
-    "main"
+    "main",
+    "catalog"
   ],
   "permissions": [
     "core:default",

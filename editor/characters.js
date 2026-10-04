@@ -9,6 +9,7 @@ export const characterAssets = [
   { id: 'robot', name: 'Expressive robot', detail: '14 animations · gestures', url: './assets/robot.glb', icon: '▣' },
 ];
 export async function loadModel(asset) {
+  if(asset.gltf)return asset.gltf;
   if (!models.has(asset.id)) {
     const pending = loader.loadAsync(asset.url).catch(error => { models.delete(asset.id); throw error; });
     models.set(asset.id, pending);
@@ -31,14 +32,14 @@ export async function importModel(file, id) {
   models.set(id, Promise.resolve(gltf));
   return { id, name: file.name.replace(/\.glb$/i, ''), detail: `${gltf.animations.length} animations · imported`, icon: '◇', buffer, gltf };
 }
-export function normalizedModel(gltf, height) {
+export function normalizedModel(gltf, height, fitHeight = true) {
   const model = new THREE.Group();
   model.add(clone(gltf.scene));
   model.updateMatrixWorld(true);
   model.traverse(o => { if (o.isSkinnedMesh) { o.skeleton.update(); o.computeBoundingBox(); } });
   const bounds = new THREE.Box3().setFromObject(model);
   const size = bounds.getSize(new THREE.Vector3());
-  const scale = height / Math.max(size.y, 0.01);
+  const scale = height / Math.max(fitHeight ? size.y : Math.max(size.x,size.y,size.z), 0.01);
   model.scale.multiplyScalar(scale);
   const center = bounds.getCenter(new THREE.Vector3());
   model.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);

@@ -27,3 +27,5 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tokio = { version = "1", features = ["sync", "macros", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+zega = { git = "https://github.com/zegadb/zega", rev = "4ecaf43064c7320cd9d587fc68f21919e50ebc1d", default-features = false }

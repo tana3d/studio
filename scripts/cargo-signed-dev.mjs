@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,7 @@ const identity = process.env.APPLE_SIGNING_IDENTITY || config.bundle.macOS.signi
 run('/usr/bin/codesign', ['--force', '--sign', identity, '--identifier', config.identifier, '--timestamp=none', binary]);
 run('/usr/bin/codesign', ['--verify', '--strict', binary]);
 process.stderr.write('Studio development binary signed and verified.\n');
-const child = spawn(binary, appArgs, { stdio: 'inherit' });
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
-child.on('error', error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
-child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : 1); });
+// Tauri must own the native PID. A child left behind when the runner is
+// killed during rebuild makes single-instance reject the next launch.
+if (typeof process.execve !== 'function') throw new Error('Studio development requires Node.js 24 or newer.');
+process.execve(binary, [binary, ...appArgs], process.env);

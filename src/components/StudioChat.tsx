@@ -74,7 +74,7 @@ export default function StudioChat({ editor }: { editor: RefObject<HTMLIFrameEle
         onText: text => setMessages(current => current.map((m, i) => i === position ? { ...m, content: m.content + text } : m)),
         onTool: tool => {
           const action = tool.name === 'apply_action' ? tool.args.type : tool.name;
-          setActivity(tool.result.ok ? action === 'place_asset' ? `Added ${tool.result.name ?? tool.result.assetId}.` : action === 'move_prop' ? 'Moved the object.' : action === 'delete_prop' ? 'Removed the object.' : 'Scene and library checked.' : `Could not edit: ${tool.result.error}`);
+          setActivity(tool.result.ok ? action === 'place_asset' ? `Added ${tool.result.name ?? tool.result.assetId}.` : action === 'move_prop' ? 'Moved the object.' : action === 'delete_prop' ? 'Removed the object.' : action === 'use_scene' ? 'Loaded the starting set.' : 'Scene and library checked.' : `Could not edit: ${tool.result.error}`);
         },
       });
     } catch (e) {
