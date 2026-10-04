@@ -44,7 +44,7 @@ pub(crate) fn valid_id(id: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .document_dir()
         .map(|p| p.join("TanaStudio").join("Library"))
@@ -78,7 +78,7 @@ pub(crate) fn read_asset(dir: &Path, id: &str) -> Result<SavedAsset, String> {
     plain(&folder.join("model.glb"))?;
     Ok(asset)
 }
-fn inspect_glb(bytes: &[u8]) -> Result<Vec<String>, String> {
+pub(crate) fn inspect_glb(bytes: &[u8]) -> Result<Vec<String>, String> {
     let number =
         |offset| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
     if bytes.len() < 20
@@ -196,10 +196,26 @@ fn persist(
     model: &[u8],
     preview: Option<&[u8]>,
 ) -> Result<SavedAsset, String> {
+    persist_with_source(dir, asset, model, preview, None)
+}
+fn persist_with_source(
+    dir: &Path,
+    asset: SavedAsset,
+    model: &[u8],
+    preview: Option<&[u8]>,
+    source: Option<(&Path, &str)>,
+) -> Result<SavedAsset, String> {
     valid_id(&asset.id)?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    if dir.join(&asset.id).exists() {
-        return read_asset(dir, &asset.id);
+    let existing = if dir.join(&asset.id).exists() {
+        Some(read_asset(dir, &asset.id)?)
+    } else {
+        None
+    };
+    if let Some(saved) = existing {
+        if source.is_none() || dir.join(&asset.id).join("IMPORT.txt").exists() {
+            return Ok(saved);
+        }
     }
     let mut random = [0; 8];
     getrandom::getrandom(&mut random).map_err(|e| e.to_string())?;
@@ -207,6 +223,21 @@ fn persist(
     fs::create_dir(&staging).map_err(|e| e.to_string())?;
     let result = (|| {
         fs::write(staging.join("model.glb"), model).map_err(|e| e.to_string())?;
+        if let Some((source, note)) = source {
+            let extension = source
+                .extension()
+                .and_then(|s| s.to_str())
+                .ok_or("Invalid source package.")?
+                .to_lowercase();
+            if !["zip", "blend"].contains(&extension.as_str())
+                || fs::metadata(source).map_err(|e| e.to_string())?.len() > 512 * 1024 * 1024
+            {
+                return Err("The original asset package is too large to preserve.".into());
+            }
+            fs::copy(source, staging.join(format!("source.{extension}")))
+                .map_err(|e| e.to_string())?;
+            fs::write(staging.join("IMPORT.txt"), note).map_err(|e| e.to_string())?;
+        }
         if let Some(bytes) = preview {
             fs::write(staging.join("preview"), bytes).map_err(|e| e.to_string())?;
         }
@@ -226,6 +257,19 @@ fn persist(
                 c["attribution"].as_str().unwrap_or("")
             );
             fs::write(staging.join("SOURCE.txt"), credit).map_err(|e| e.to_string())?;
+        }
+        if dir.join(&asset.id).exists() {
+            // A previously imported GLB can acquire its editable source later.
+            // Never replace the existing model or its metadata.
+            for filename in ["source.zip", "source.blend", "IMPORT.txt"] {
+                let original = staging.join(filename);
+                if original.exists() {
+                    fs::rename(original, dir.join(&asset.id).join(filename))
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            fs::remove_dir_all(&staging).map_err(|e| e.to_string())?;
+            return read_asset(dir, &asset.id);
         }
         fs::rename(&staging, dir.join(&asset.id)).map_err(|e| e.to_string())?;
         Ok(asset)
@@ -349,39 +393,48 @@ pub async fn library_import(
         let model = STANDARD
             .decode(data)
             .map_err(|_| "Could not read the imported file.")?;
-        let animations = inspect_glb(&model)?;
-        let hash = format!("{:x}", Sha256::digest(&model));
-        if !["props", "characters", "scenes"].contains(&category.as_str()) {
-            return Err("Choose objects, characters or scenes.".into());
-        }
-        let name = name
-            .trim()
-            .trim_end_matches(".glb")
-            .chars()
-            .take(160)
-            .collect::<String>();
-        if name.is_empty() {
-            return Err("Give this model a name.".into());
-        }
-        let asset = SavedAsset {
-            id: format!("local-{category}-{hash}"),
-            name,
-            category,
-            tags: vec![],
-            animations,
-            catalog: None,
-            footprint: None,
-            height: None,
-            sha256: hash,
-        };
-        let _guard = WRITES.lock().map_err(|e| e.to_string())?;
-        let saved = persist(&dir, asset, &model, None)?;
-        crate::collection::with(&dir, |collection| collection.put(&saved))?;
-        Ok(saved)
+        save_import(&dir, &name, &category, &model, None)
     })
     .await?;
     let _ = app.emit("library-changed", &asset);
     Ok(asset)
+}
+pub(crate) fn save_import(
+    dir: &Path,
+    name: &str,
+    category: &str,
+    model: &[u8],
+    source: Option<(&Path, &str)>,
+) -> Result<SavedAsset, String> {
+    let animations = inspect_glb(model)?;
+    let hash = format!("{:x}", Sha256::digest(model));
+    if !["props", "characters", "scenes"].contains(&category) {
+        return Err("Choose objects, characters or scenes.".into());
+    }
+    let name: String = name
+        .trim()
+        .trim_end_matches(".glb")
+        .chars()
+        .take(160)
+        .collect();
+    if name.is_empty() {
+        return Err("Give this model a name.".into());
+    }
+    let asset = SavedAsset {
+        id: format!("local-{category}-{hash}"),
+        name,
+        category: category.into(),
+        tags: vec![],
+        animations,
+        catalog: None,
+        footprint: None,
+        height: None,
+        sha256: hash,
+    };
+    let _guard = WRITES.lock().map_err(|e| e.to_string())?;
+    let saved = persist_with_source(dir, asset, model, None, source)?;
+    crate::collection::with(dir, |collection| collection.put(&saved))?;
+    Ok(saved)
 }
 #[tauri::command]
 pub async fn library_read(app: tauri::AppHandle, id: String) -> Result<String, String> {
@@ -566,6 +619,37 @@ mod tests {
             sha256: format!("{:x}", Sha256::digest(&bytes)),
         };
         persist(&dir, asset.clone(), &bytes, None).unwrap();
+        let archive = dir.join("original.ZIP");
+        fs::write(&archive, b"source package bytes").unwrap();
+        persist_with_source(
+            &dir,
+            asset.clone(),
+            &bytes,
+            None,
+            Some((&archive, "Original retained")),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(dir.join("a/source.zip")).unwrap(),
+            b"source package bytes"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("a/IMPORT.txt")).unwrap(),
+            "Original retained"
+        );
+        fs::write(&archive, b"replacement bytes").unwrap();
+        persist_with_source(
+            &dir,
+            asset.clone(),
+            &bytes,
+            None,
+            Some((&archive, "Overwrite attempt")),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(dir.join("a/source.zip")).unwrap(),
+            b"source package bytes"
+        );
         let mut changed = asset;
         changed.name = "Replaced".into();
         assert_eq!(

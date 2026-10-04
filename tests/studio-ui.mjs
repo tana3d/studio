@@ -54,6 +54,8 @@ try {
         if(command==='library_open_browser'){window.testCatalogWindowOpens++;return;}
         if(command==='library_close_browser')return;
         if(command==='library_import'){const item={id:'fixture-import',name:args.name.replace(/\.glb$/i,''),category:args.category,tags:[],animations:['Walk'],catalog:null};window.testLibrary.set(item.id,item);return item;}
+        if(command==='library_pick_import')return new Promise(resolve=>{window.finishTestImport=()=>{const asset={id:'fixture-converted',name:'Converted Blender model',category:args.category,tags:[],animations:['Walk'],catalog:null};window.testLibrary.set(asset.id,asset);resolve({asset,warnings:[]});};});
+        if(command==='library_cancel_import'){window.testCancelled=true;window.finishTestImport=null;window.cancelTestImport?.();return;}
         if(command==='library_open_folder'){window.testFolderOpened=true;return;}
         if (command === 'plugin:event|listen') { window.testAccountChanged = () => window.testCallbacks.get(args.handler)({ event: 'chatgpt-changed', id: 1, payload: null }); return 1; }
         if (command === 'plugin:event|unlisten') return;
@@ -78,7 +80,7 @@ try {
         throw new Error(`Unexpected command: ${command}`);
       },
     };
-    window.__TAURI__ = { core: { invoke: window.__TAURI_INTERNALS__.invoke } };
+    window.__TAURI__ = { core: { invoke: window.__TAURI_INTERNALS__.invoke },event:{listen:async(name,callback)=>{window.testEvents??={};window.testEvents[name]=callback;return()=>delete window.testEvents[name];}} };
   });
   await page.goto(url, { waitUntil: 'networkidle' });
   const editor = page.frames().find(frame => frame.url().includes('/studio/index.html'));
@@ -242,6 +244,16 @@ try {
   await editor.locator('[data-asset="fixture-import"]').waitFor();
   assert.equal(await page.evaluate(()=>window.testLibraryReads),1,'User imports validate before saving and do not reread the file');
   assert.equal(await page.evaluate(()=>window.testLibrary.get('fixture-import').name),'performer','User imports join the persistent collection');
+  await editor.locator('#import-model').click();
+  assert.equal(await editor.locator('#import-progress-panel').isVisible(),true);
+  assert.equal(await editor.locator('#import-progress').getAttribute('value'),null,'Conversion does not invent a completion percentage');
+  assert.equal(await editor.locator('#import-model').isDisabled(),true);
+  await page.evaluate(()=>window.testEvents['library-import-progress']({payload:'Converting model and textures…'}));
+  assert.equal(await editor.locator('#import-status').textContent(),'Converting model and textures…');
+  await page.evaluate(()=>window.finishTestImport());
+  await editor.locator('[data-asset="fixture-converted"]').waitFor();
+  await editor.waitForFunction(()=>document.getElementById('import-progress-panel').hidden);
+  assert.equal(await editor.locator('#import-model').isEnabled(),true);
   // A real animated robot can emote, record it, and replay the same pose.
   const robot=await editor.evaluate(()=>window.__studio.rixse.dispatch({type:'place_asset',payload:{asset_id:'robot',x:1.8,y:0,z:2}},'you'));
   assert.equal(robot.ok,true);
@@ -276,6 +288,9 @@ try {
   const iframeBox=await page.locator('iframe').boundingBox();await page.mouse.click(iframeBox.x+selectPoint[0],iframeBox.y+selectPoint[1]);
   await editor.locator('#model-inspector').waitFor({state:'visible'});await editor.locator('#model-size').fill('200');await editor.locator('#model-size').press('Tab');
   assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),2);
+  await editor.locator('#model-depth').fill('20');await editor.locator('#model-depth').press('Tab');
+  assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),10,'Metre dimensions can enlarge a model beyond scene boundaries');
+  await editor.locator('#undo').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),2);
   await editor.locator('#undo').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1.5);
   await editor.locator('#redo').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),2);
   await editor.locator('#model-size-reset').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1);

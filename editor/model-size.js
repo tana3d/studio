@@ -1,6 +1,6 @@
 import { Box3 } from 'three';
 export function modelScale(value) {
-  if(!Number.isFinite(value)||value<.05||value>20)throw new Error('Choose a model size between 5% and 2,000%.');
+  if(!Number.isFinite(value)||value<=0)throw new Error('Choose a positive model size.');
   return value;
 }
 // Keep a prop's bottom at its existing height, even when a set piece has a

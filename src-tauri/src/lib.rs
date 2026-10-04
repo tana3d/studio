@@ -3,6 +3,7 @@ mod collection;
 mod export;
 mod library;
 mod loopback;
+mod model_import;
 mod native_smoke;
 mod scene_tools;
 
@@ -36,6 +37,8 @@ pub fn run() {
             library::library_catalog,
             library::library_download,
             library::library_import,
+            model_import::library_pick_import,
+            model_import::library_cancel_import,
             library::library_read,
             library::library_measure,
             library::library_open_folder,
@@ -46,6 +49,13 @@ pub fn run() {
             native_smoke::native_smoke_report,
         ])
         .on_page_load(|_webview, _payload| {
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && _webview.label() == "main"
+                && std::env::var_os("STUDIO_IMPORT_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-import-smoke.js"));
+            }
             #[cfg(debug_assertions)]
             if _payload.event() == tauri::webview::PageLoadEvent::Finished
                 && _webview.label() == "main"

@@ -62,7 +62,7 @@ test('agent resizing is bounded, undoable and subsequent moves use scaled collis
  const f=fixture();await f.bridge.dispatch({type:'place_asset',payload:{asset_id:'cone',x:0,y:0,z:2}});
  const result=await f.bridge.dispatch({type:'resize_prop',payload:{object_id:'cone-1',scale:3}});
  assert.equal(result.ok,true);assert.equal(f.state().objects[0].scale,3);f.history.undo();assert.equal(f.state().objects[0].scale,undefined);f.history.redo();assert.equal(f.state().objects[0].scale,3);
- const count=f.history.past.length;for(const scale of [0,-1,21,NaN])assert.equal((await f.bridge.dispatch({type:'resize_prop',payload:{object_id:'cone-1',scale}})).ok,false);assert.equal(f.history.past.length,count);
+ const count=f.history.past.length;for(const scale of [0,-1,NaN])assert.equal((await f.bridge.dispatch({type:'resize_prop',payload:{object_id:'cone-1',scale}})).ok,false);assert.equal(f.history.past.length,count);
  let observed;
  const state={library:[{id:'cone',category:'props',footprint:[.4,.5],height:.7}],objects:[{id:'one',assetId:'cone',position:[0,0,2],scale:3}],characters:[],anchors:{}};
  const bridge=createSceneBridge({read:()=>state,clear:asset=>{observed=asset;return()=>true;},project:()=>{}});

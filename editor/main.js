@@ -605,20 +605,13 @@ function refreshModelInspector(){
   if(!panel)return;panel.hidden=!target;if(!target)return;
   const size=new THREE.Box3().setFromObject(target.group).getSize(new THREE.Vector3());
   document.getElementById('model-name').textContent=target.spec.name ?? propAssets.find(a=>a.id===target.spec.type)?.name ?? target.spec.type;
-  const value=Math.round((target.spec.scale??1)*100);
+  const value=Number(((target.spec.scale??1)*100).toFixed(2));
   document.getElementById('model-size').value=value;document.getElementById('model-size-slider').value=value;
-  document.getElementById('model-dimensions').textContent=`${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m · width, height, depth`;
+  for(const [name,axis]of [['width','x'],['height','y'],['depth','z']])document.getElementById('model-'+name).value=size[axis].toFixed(3);
 }
 function resizeProp(rec,value){
   modelScale(value);
-  const oldScale=rec.group.scale.clone(),oldPosition=rec.group.position.clone();
   scaleModel(rec.group,value);
-  const bounds=propBounds(rec),size=bounds.getSize(new THREE.Vector3()),centre=bounds.getCenter(new THREE.Vector3());
-  const blocks=(PROP_HEIGHTS[rec.spec.type]??.7)>0;
-  if(!validAt(centre.x,centre.z,size.x,size.z,bounds.min.y,blocks?size.y:0,rec.colliders)){
-    rec.group.scale.copy(oldScale);rec.group.position.copy(oldPosition);
-    throw new Error('That size overlaps another object or extends beyond the set. Move the model to a clearer spot first.');
-  }
   rec.spec.scale=value;rec.elev=rec.group.position.y;updateSpec(rec);setCollidersAt(rec);
 }
 function changeModelSize(value){
@@ -629,8 +622,6 @@ function changeModelSize(value){
     modelScale(value);if(value===(target.spec.scale??1))return;
     if(!history.pending){history.begin('Resize model');started=true;}
     if(selected)resizeProp(target,value);else{
-      const p=target.group.position;
-      if(!validAt(p.x,p.z,.64*value,.64*value,p.y,1.85*value))throw new Error('That size overlaps scenery. Move the character to a clearer spot first.');
       scaleModel(target.group,value,false);target.spec.scale=value;
     }
     refreshJson();refreshModelInspector();
@@ -900,6 +891,13 @@ $('model-size-slider').oninput=e=>changeModelSize(Number(e.target.value)/100);
 $('model-size-slider').onchange=finishModelSize;
 $('model-size-slider').onblur=finishModelSize;
 $('model-size-reset').onclick=()=>{changeModelSize(1);finishModelSize();};
+for(const [name,axis]of [['width','x'],['height','y'],['depth','z']])$('model-'+name).onchange=e=>{
+  const target=modelTarget(),value=Number(e.target.value);
+  if(!target)return;
+  const size=new THREE.Box3().setFromObject(target.group).getSize(new THREE.Vector3())[axis];
+  if(!Number.isFinite(value)||value<=0||size<=0){hint('Enter a positive dimension in metres.');refreshModelInspector();return;}
+  changeModelSize((target.spec.scale??1)*value/size);finishModelSize();
+};
 $('model-deselect').onclick=()=>{finishModelSize();select(null);};
 const canEditWorld = () => timeline.mode === 'live' && !recorder && !loadingModels;
 const canEditCameras = () => !recorder && !loadingModels && timeline.mode !== 'recording';
@@ -1102,9 +1100,27 @@ for(const tab of ['library','action']){
     e.preventDefault();setSidebarTab(e.key==='Home'?'library':e.key==='End'?'action':tab==='library'?'action':'library',true);
   };
 }
+async function importDesktopModel(){
+  prepareAssetEdit();history.begin('Import model');const category=libraryTab;loadingModels++;
+  $('import-model').disabled=true;$('import-progress-panel').hidden=false;$('import-status').textContent='Choose a model or an asset ZIP…';hint('Choose a model or an asset ZIP…');
+  try{
+    const result=await libraryNative.invoke('library_pick_import',{category});
+    if(!result){history.discard();hint('Import cancelled.');return;}
+    const asset=registerSavedAsset(result.asset);await hydrateAsset(asset,false);
+    renderLibrary();history.commit();
+    hint(`${asset.name} is ready in your library.${result.warnings?.length?' '+result.warnings.join(' '):''}`);
+  }catch(error){history.discard();hint(`Import: ${error.message??error}`);}
+  finally{loadingModels--;$('import-model').disabled=false;$('import-progress-panel').hidden=true;}
+}
+if(libraryNative){
+  $('import-help').textContent='Import Blender, FBX, OBJ, glTF, STL, PLY, USD or an asset ZIP. Keep textures with the model; conversion happens on your computer.';
+  const events=window.parent.__TAURI__?.event;
+  if(events){const stop=events.listen('library-import-progress',event=>{if(!$('import-progress-panel').hidden)$('import-status').textContent=event.payload;hint(event.payload);});void stop.catch(()=>{});window.addEventListener('pagehide',()=>void stop.then(unlisten=>unlisten()).catch(()=>{}),{once:true});}
+}else $('import-help').textContent='The browser preview imports GLB files. Open the desktop app to import other formats.';
+$('cancel-import').onclick=()=>void libraryNative.invoke('library_cancel_import').catch(error=>hint(String(error)));
 $('import-model').onclick = () => {
   if (!canLoadAssets()) { hint('Finish the recording or current edit before importing a model.'); return; }
-  prepareAssetEdit();$('model-file').click();
+  if(libraryNative)void importDesktopModel();else{prepareAssetEdit();$('model-file').click();}
 };
 $('model-file').onchange = async e => {
   const file = e.target.files[0]; if (!file) return;

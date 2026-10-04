@@ -11,6 +11,9 @@ canvas { display:block; cursor:crosshair; }
 #model-size-reset { padding:4px 8px;margin-left:auto; }
 #model-size-slider { width:100%;accent-color:var(--accent); }
 #model-dimensions { margin:4px 0 0;font-size:11px; }
+.model-dimension-fields { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:8px; }
+.model-dimension-fields label { min-width:0;margin:0;font-size:10px;color:var(--muted); }
+.model-dimension-fields input { width:100%;padding:4px;border:1px solid var(--line);border-radius:4px;background:#101719;color:var(--text);font-size:12px; }
 button,input,select { font:inherit; }
 button { border:1px solid #ffffff20; background:#263034; color:var(--text); padding:8px 12px; border-radius:6px; cursor:pointer; transition:background .15s; white-space:nowrap; }
 button:hover { background:#364347; }
@@ -230,3 +233,6 @@ summary { cursor:pointer; }
 
 .catalog-window #catalog-dialog { inset:0; margin:0; width:100%; height:100%; min-width:0; min-height:0; max-width:none; max-height:none; border:0; border-radius:0; box-shadow:none; }
 .catalog-window #catalog-resize { display:none; }
+#import-progress-panel { padding:10px 0; }
+#import-progress { width:100%; height:6px; accent-color:var(--accent,#c8e89e); }
+#import-status { margin:8px 0; }

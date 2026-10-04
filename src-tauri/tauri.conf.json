@@ -30,6 +30,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": { "converter/runtime/": "converter/runtime/", "converter/convert.py": "converter/convert.py", "converter/SOURCE.md": "converter/SOURCE.md" },
     "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",

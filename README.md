@@ -42,7 +42,7 @@ To test a real agent edit, launch dev mode with `STUDIO_AGENT_SMOKE_REPORT="$PWD
 
 ## What is included
 
-- Asset library, GLB imports, animated performers, character and camera controls.
+- Asset library, local model conversion, animated performers, character and camera controls.
 - Layered performance timeline, camera shots, splits, undo/redo, fade and wipe transitions.
 - Landscape 16:9 and vertical 9:16 video framing, MP4/WebM and quality selection where supported by the host's webview.
 - Native save dialogs for footage and scene ZIP exports. Unzip scene exports to get the footage folder.
@@ -53,6 +53,28 @@ To test a real agent edit, launch dev mode with `STUDIO_AGENT_SMOKE_REPORT="$PWD
 The inherited desktop search UI, menu-bar/tray app, global shortcuts, file crawler/index, Deka runtime, app generation, terminal, and Zega account/update services have been removed. The scene editor retains its movement and editing controls. See [editor controls and details](docs/editor.md).
 
 ## Current boundaries
+
+Desktop **Import model** accepts GLB, Blender (`.blend`), FBX, OBJ, glTF, STL, PLY,
+USD and asset ZIPs. Non-GLB files are converted locally with bundled Python 3.11
+and Blender `bpy` 4.5.14 LTS. First-time developer setup downloads that runtime
+automatically through `npm run tauri`; packaged users need no separate install.
+Generated runtime binaries are excluded from Git. Native resource bundling
+includes the entire runtime, and macOS release builds sign its native binaries.
+
+Keep external textures and buffers beside a directly imported model, or upload
+a ZIP containing one asset and its textures. ZIP import prefers a single Blender
+project over accompanying interchange versions; it refuses to guess between
+multiple assets. The original ZIP is retained as `source.zip` beside `model.glb`
+in your collection. Direct Blender imports retain a packed `source.blend` copy;
+your original file is never overwritten. Progress and Cancel remain visible
+while converting. Sources are limited to 256 MB, extracted packages to 512 MB,
+finished GLBs to 50 MB, and conversion to five minutes.
+
+Supported image materials, rigs and animations are exported. Procedural materials
+may need baking for an exact appearance; embedded Python and animation drivers
+are disabled. Newer Blender files and unsupported features can fail with a clear
+error. The browser preview still imports GLB only. The converter script and
+Blender retain GPL licensing; see [converter source and distribution requirements](src-tauri/converter/SOURCE.md).
 
 ChatGPT can edit the live scene through Rixse actions, including while reviewing a paused timeline. It cannot generate/rig/animate assets or edit camera/performance clips yet. Its model list depends on the signed-in account and the provider's supported models. Credentials live in Studio's own OS credential vault; access tokens stay in the native process and are never exposed to the editor.
 

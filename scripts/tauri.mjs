@@ -4,6 +4,19 @@ import { join } from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const args = process.argv.slice(2);
+if(['dev','build'].includes(args[0])){
+  const target=args.indexOf('--target');
+  await new Promise((accept,reject)=>{
+    const preparation=spawn(process.execPath,[join(root,'scripts/prepare-converter.mjs'),...(target>=0?['--target',args[target+1]]:[])],{stdio:'inherit'});
+    preparation.on('error',reject);preparation.on('exit',code=>code===0?accept():reject(new Error('Could not prepare the bundled model converter.')));
+  });
+}
+if(process.platform==='darwin'&&args[0]==='build'){
+  await new Promise((accept,reject)=>{
+    const signing=spawn(process.execPath,[join(root,'scripts/sign-converter.mjs')],{stdio:'inherit'});
+    signing.on('error',reject);signing.on('exit',code=>code===0?accept():reject(new Error('Could not sign the bundled converter.')));
+  });
+}
 if (process.platform === 'darwin' && args[0] === 'dev' && !args.some(a => a === '--runner' || a === '-r')) {
   args.splice(1, 0, '--runner', join(root, 'scripts/cargo-signed-dev.mjs'));
 }

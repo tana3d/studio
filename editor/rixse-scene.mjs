@@ -65,10 +65,9 @@ export function createSceneBridge({ read, project, clear, prepare = async () => 
       apply:(state,p)=>{
         const existing=state.objects.find(o=>o.id===p.object_id);
         if(!existing)reject('Object no longer exists. Read the scene again.');
-        if(!Number.isFinite(p.scale)||p.scale<.05||p.scale>20)reject('Scale must be between 0.05 and 20.');
+        if(!Number.isFinite(p.scale)||p.scale<=0)reject('Scale must be a positive finite number.');
         const asset=state.library.find(a=>a.id===existing.assetId);
         if(!asset)reject('Unknown library asset.');
-        at(state,asset,{x:existing.position[0],y:existing.position[1],z:existing.position[2],rotation_y:existing.rotationY},existing.id,p.scale);
         const record={...existing,scale:p.scale};
         return {...state,objects:state.objects.map(o=>o.id===record.id?record:o),operation:{type:'resize_prop',asset,record},result:{ok:true,...record}};
       },

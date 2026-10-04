@@ -2,7 +2,9 @@
 #[tauri::command]
 pub fn native_smoke_report(report: serde_json::Value, kind: Option<String>) -> Result<(), String> {
     #[cfg(debug_assertions)]
-    if let Ok(path) = (if kind.as_deref() == Some("catalog") {
+    if let Ok(path) = (if kind.as_deref() == Some("import") {
+        std::env::var("STUDIO_IMPORT_SMOKE_REPORT")
+    } else if kind.as_deref() == Some("catalog") {
         std::env::var("STUDIO_CATALOG_SMOKE_REPORT")
     } else {
         std::env::var("STUDIO_LIBRARY_SMOKE_REPORT")
