@@ -12,7 +12,8 @@ export function modelFile(data, name) {
 export function createCatalog({ register, changed, notice, clearKeys, standalone=false }) {
   const $ = id => document.getElementById(id), dialog = $('catalog-dialog');
   const saved = new Map(); let page = 1, pages = 1, request = 0, timer, openedBy, fingerprint='';
-  const downloads = new Map(), buttonUpdates = new Map();
+  const downloads = new Map(), buttonUpdates = new Map(), progress = new Map();
+  let progressSubscription=Promise.resolve();
   const status = message => { $('catalog-status').textContent = message; };
   const link = (label, url) => {
     const a = document.createElement('a'); a.textContent = label;
@@ -31,9 +32,10 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
   async function download(id) {
     if (!libraryNative) throw new Error('Open Studio on your desktop to save assets to your collection.');
     if (downloads.has(id)) return downloads.get(id);
-    const pending = libraryNative.invoke('library_download',{id}).then(item => {
-      saved.set(item.id,item); register(item); return item;
-    }).finally(() => downloads.delete(id));
+    progress.set(id,{stage:'queued',label:'Waiting to download…'});
+    const pending = progressSubscription.then(()=>libraryNative.invoke('library_download',{id})).then(item => {
+      saved.set(item.id,item); register(item); progress.set(id,{stage:'ready',label:'Ready in your collection',percent:100}); return item;
+    }).catch(error=>{progress.set(id,{stage:'error',label:String(error)});throw error;}).finally(() => {downloads.delete(id);buttonUpdates.get(id)?.();});
     downloads.set(id,pending);return pending;
   }
   async function load({quiet=false}={}) {
@@ -63,10 +65,15 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
         const count=document.createElement('p');count.className='catalog-downloads';
         const credits=document.createElement('p');credits.className='catalog-credit';credits.append(link(asset.creator,asset.source_url),document.createTextNode(' · '),link(asset.license,asset.license_url));
         if(asset.animations?.length){const badge=document.createElement('span');badge.className='catalog-animation';badge.textContent=`${asset.animations.length} animations`;card.append(badge);}
+        if(['blend','zip'].includes(asset.model_format)){const badge=document.createElement('span');badge.className='catalog-animation';badge.textContent='Converts in Studio';card.append(badge);}
+        const label=document.createElement('p');label.className='catalog-progress-label';label.setAttribute('role','status');
+        const bar=document.createElement('progress');bar.className='catalog-progress';bar.max=100;bar.setAttribute('aria-label',`${asset.name} download and conversion`);
         const button=document.createElement('button');button.className='primary';
-        const update=()=>{count.textContent=`${Math.max(asset.downloads??0,saved.get(asset.id)?.catalog?.downloads??0).toLocaleString()} downloads`;button.textContent=saved.has(asset.id)?'In your collection':downloads.has(asset.id)?'Downloading…':'Add to collection';button.disabled=saved.has(asset.id)||downloads.has(asset.id)||!libraryNative;};buttonUpdates.set(asset.id,update);update();
+        const update=()=>{count.textContent=`${Math.max(asset.downloads??0,saved.get(asset.id)?.catalog?.downloads??0).toLocaleString()} downloads`;const state=progress.get(asset.id),busy=downloads.has(asset.id);button.textContent=saved.has(asset.id)?'In your collection':busy?(['converting','extracting'].includes(state?.stage)?'Converting…':state?.stage==='saving'?'Saving…':'Downloading…'):'Add to collection';button.disabled=saved.has(asset.id)||busy||!libraryNative;
+          label.hidden=!state;label.textContent=state?.label??'';bar.hidden=!busy;
+          if(Number.isFinite(state?.percent)){bar.value=state.percent;if(busy)label.textContent=`${state.label} ${Math.round(state.percent)}%`;}else bar.removeAttribute('value');};buttonUpdates.set(asset.id,update);update();
         button.onclick=async()=>{const pending=download(asset.id);update();try{await pending;status(`${asset.name} added to your collection.`);notice(`${asset.name} is ready in your library.`);}catch(error){status(`Could not download ${asset.name}: ${error.message??error}`);}finally{update();buttonUpdates.get(asset.id)?.();}};
-        card.append(image,title,description,tags,credits,count,button);$('catalog-grid').append(card);
+        card.append(image,title,description,tags,credits,count,label,bar,button);$('catalog-grid').append(card);
       }
       status(data.total?`${data.total.toLocaleString()} assets · Page ${page} of ${pages}`:'No assets found. Try another search.');
       $('catalog-page').textContent=pages?`${page} / ${pages}`:'';
@@ -120,6 +127,12 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
   window.addEventListener('pagehide',()=>clearInterval(polling),{once:true});
   const events=window.parent.__TAURI__?.event;
   if(events){
+    progressSubscription=events.listen('library-download-progress',event=>{
+      const state=event.payload;if(!state||typeof state.id!=='string')return;
+      progress.set(state.id,state);buttonUpdates.get(state.id)?.();
+    });
+    window.addEventListener('pagehide',()=>void progressSubscription.then(unlisten=>unlisten()).catch(()=>{}),{once:true});
+    void progressSubscription.catch(error=>notice(`Download progress unavailable: ${error}`));
     const stop=events.listen('library-changed',()=>void collect().catch(error=>notice(String(error))));
     window.addEventListener('pagehide',()=>void stop.then(unlisten=>unlisten()).catch(()=>{}),{once:true});
     void stop.catch(error=>notice(`Library updates unavailable: ${error}`));

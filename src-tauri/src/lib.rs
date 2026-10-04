@@ -51,6 +51,12 @@ pub fn run() {
         .on_page_load(|_webview, _payload| {
             #[cfg(debug_assertions)]
             if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && std::env::var_os("STUDIO_PACKAGE_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-package-smoke.js"));
+            }
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
                 && _webview.label() == "main"
                 && std::env::var_os("STUDIO_IMPORT_SMOKE_REPORT").is_some()
             {

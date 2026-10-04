@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
     time::Duration,
@@ -14,7 +14,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 const ORIGIN: &str = "https://tana.gg";
-const MAX_MODEL: usize = 50 * 1024 * 1024;
+const MAX_MODEL: usize = 512 * 1024 * 1024;
+static DOWNLOADS: Mutex<()> = Mutex::new(());
 static WRITES: Mutex<()> = Mutex::new(());
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedAsset {
@@ -88,7 +89,7 @@ pub(crate) fn inspect_glb(bytes: &[u8]) -> Result<Vec<String>, String> {
         || number(8) != bytes.len()
         || &bytes[16..20] != b"JSON"
     {
-        return Err("Choose a valid, self-contained GLB under 50 MB.".into());
+        return Err("Choose a valid, self-contained GLB under 512 MB.".into());
     }
     let end = 20usize
         .checked_add(number(12))
@@ -190,6 +191,7 @@ fn text(doc: &Value, key: &str) -> Result<String, String> {
         .map(str::to_owned)
         .ok_or_else(|| format!("Catalog asset is missing {key}."))
 }
+#[cfg(test)]
 fn persist(
     dir: &Path,
     asset: SavedAsset,
@@ -310,27 +312,89 @@ pub async fn library_catalog(q: String, category: String, page: u32) -> Result<V
     })
     .await
 }
+fn download_file(
+    client: &reqwest::blocking::Client,
+    id: &str,
+    path: &Path,
+    expected: u64,
+    progress: impl Fn(f64),
+) -> Result<Option<u64>, String> {
+    if expected == 0 || expected > 256 * 1024 * 1024 {
+        return Err("Keep asset packages under 256 MB.".into());
+    }
+    let mut response = client
+        .get(format!("{ORIGIN}/api/assets/{id}/download"))
+        .send()
+        .map_err(|_| "Could not reach the Tana library.")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Tana library returned {}. Try again shortly.",
+            response.status()
+        ));
+    }
+    if response.content_length().is_some_and(|n| n != expected) {
+        return Err("The asset download was incomplete. Try again.".into());
+    }
+    let downloads = response
+        .headers()
+        .get("X-Download-Count")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|n| n.parse().ok());
+    let mut file = fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut buffer = [0u8; 64 * 1024];
+    let mut received = 0u64;
+    let mut last = -1i32;
+    loop {
+        let size = response.read(&mut buffer).map_err(|e| e.to_string())?;
+        if size == 0 {
+            break;
+        }
+        received += size as u64;
+        if received > expected {
+            return Err("The asset download has an unexpected size.".into());
+        }
+        file.write_all(&buffer[..size]).map_err(|e| e.to_string())?;
+        let percent = (received * 100 / expected) as i32;
+        if percent != last {
+            progress(percent as f64);
+            last = percent;
+        }
+    }
+    if received != expected {
+        return Err("The asset download was incomplete. Try again.".into());
+    }
+    Ok(downloads)
+}
 #[tauri::command]
 pub async fn library_download(app: tauri::AppHandle, id: String) -> Result<SavedAsset, String> {
     valid_id(&id)?;
     let dir = root(&app)?;
-    let asset = background(move || {
-        let _guard = WRITES.lock().map_err(|e| e.to_string())?;
-        if dir.join(&id).exists() {
+    let task_app = app.clone();
+    let task_id = id.clone();
+    let result = background(move || {
+        let progress = |stage: &str, label: &str, percent: Option<f64>| {
+            let _ = task_app.emit(
+                "library-download-progress",
+                json!({"id":task_id,"stage":stage,"label":label,"percent":percent}),
+            );
+        };
+        progress("queued", "Waiting to download…", None);
+        let _download = DOWNLOADS.lock().map_err(|e| e.to_string())?;
+        if dir.join(&task_id).exists() {
             return crate::collection::with(&dir, |collection| {
-                if let Some(saved) = collection.get(&id)? {
-                    return Ok(saved);
-                }
-                let saved = read_asset(&dir, &id)?;
+                let saved = read_asset(&dir, &task_id)?;
                 collection.put(&saved)?;
                 Ok(saved)
             });
         }
         let client = client()?;
-        let mut catalog: Value =
-            serde_json::from_slice(&fetch(&client, &format!("/api/assets/{id}"), 256 * 1024)?)
-                .map_err(|_| "Could not read this catalog asset.")?;
-        if text(&catalog, "id")? != id {
+        let mut catalog: Value = serde_json::from_slice(&fetch(
+            &client,
+            &format!("/api/assets/{task_id}"),
+            256 * 1024,
+        )?)
+        .map_err(|_| "Could not read this catalog asset.")?;
+        if text(&catalog, "id")? != task_id {
             return Err("Catalog asset does not match the download.".into());
         }
         let name = text(&catalog, "name")?;
@@ -338,15 +402,34 @@ pub async fn library_download(app: tauri::AppHandle, id: String) -> Result<Saved
         if !["props", "characters", "scenes"].contains(&category.as_str()) {
             return Err("Unknown catalog category.".into());
         }
-        let (model, downloads) =
-            fetch_counted(&client, &format!("/api/assets/{id}/download"), MAX_MODEL)?;
+        let format = catalog["model_format"].as_str().unwrap_or("glb");
+        if !["glb", "blend", "zip"].contains(&format) {
+            return Err("This catalog format is not supported yet.".into());
+        }
+        let work = tempfile::Builder::new()
+            .prefix("tana-catalog-download-")
+            .tempdir()
+            .map_err(|e| e.to_string())?;
+        let source = work.path().join(format!("source.{format}"));
+        progress("downloading", "Downloading…", Some(0.0));
+        let downloads = download_file(
+            &client,
+            &task_id,
+            &source,
+            catalog["model_bytes"]
+                .as_u64()
+                .ok_or("Missing asset size.")?,
+            |percent| progress("downloading", "Downloading…", Some(percent)),
+        )?;
         if let Some(downloads) = downloads {
             catalog["downloads"] = json!(downloads);
         }
-        if catalog["model_bytes"].as_u64() != Some(model.len() as u64) {
-            return Err("The model download was incomplete. Please try again.".into());
-        }
-        let animations = inspect_glb(&model)?;
+        let model =
+            crate::model_import::prepare_catalog_model(&task_app, &source, |stage, label| {
+                progress(stage, label, None)
+            })?;
+        let animations = inspect_glb(&model.bytes)?;
+        progress("saving", "Saving to your collection…", None);
         let preview_key = catalog["poster_key"]
             .as_str()
             .filter(|s| !s.is_empty())
@@ -360,7 +443,7 @@ pub async fn library_download(app: tauri::AppHandle, id: String) -> Result<Saved
             .filter_map(|v| v.as_str().map(str::to_owned))
             .collect();
         let asset = SavedAsset {
-            id,
+            id: task_id,
             name,
             category,
             tags,
@@ -368,15 +451,37 @@ pub async fn library_download(app: tauri::AppHandle, id: String) -> Result<Saved
             catalog: Some(catalog),
             footprint: None,
             height: None,
-            sha256: format!("{:x}", Sha256::digest(&model)),
+            sha256: format!("{:x}", Sha256::digest(&model.bytes)),
         };
-        let saved = persist(&dir, asset, &model, Some(&preview))?;
+        let _guard = WRITES.lock().map_err(|e| e.to_string())?;
+        let saved = persist_with_source(
+            &dir,
+            asset,
+            &model.bytes,
+            Some(&preview),
+            model.source.as_deref().map(|p| (p, model.note.as_str())),
+        )?;
         crate::collection::with(&dir, |collection| collection.put(&saved))?;
         Ok(saved)
     })
-    .await?;
-    let _ = app.emit("library-changed", &asset);
-    Ok(asset)
+    .await;
+    match result {
+        Ok(asset) => {
+            let _ = app.emit(
+                "library-download-progress",
+                json!({"id":id,"stage":"ready","label":"Ready in your collection","percent":100}),
+            );
+            let _ = app.emit("library-changed", &asset);
+            Ok(asset)
+        }
+        Err(error) => {
+            let _ = app.emit(
+                "library-download-progress",
+                json!({"id":id,"stage":"error","label":error}),
+            );
+            Err(error)
+        }
+    }
 }
 #[tauri::command]
 pub async fn library_import(
@@ -388,7 +493,7 @@ pub async fn library_import(
     let dir = root(&app)?;
     let asset = background(move || {
         if data.len() > MAX_MODEL * 4 / 3 + 4 {
-            return Err("Keep models under 50 MB.".into());
+            return Err("Keep models under 512 MB.".into());
         }
         let model = STANDARD
             .decode(data)

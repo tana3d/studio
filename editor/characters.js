@@ -18,7 +18,7 @@ export async function loadModel(asset) {
 }
 export async function importModel(file, id) {
   if (!file.name.toLowerCase().endsWith('.glb')) throw new Error('Choose a self-contained .glb file.');
-  if (file.size > 50 * 1024 * 1024) throw new Error('Keep models under 50 MB for this prototype.');
+  if (file.size > 512 * 1024 * 1024) throw new Error('Keep models under 512 MB.');
   const buffer = await file.arrayBuffer();
   // Local imports must embed their resources; never fetch URLs supplied by a model.
   const view = new DataView(buffer);

@@ -45,6 +45,7 @@ try {
           return {assets:assets.filter(a=>(!args.category||a.category===args.category)&&(!args.q||a.name.toLowerCase().includes(args.q.toLowerCase()))),total:48,page:args.page,pages:2};
         }
         if(command==='library_download'){
+          await new Promise(resolve=>{window.finishTestDownload=resolve;});
           const item={id:args.id,name:args.id==='fixture-object'?'Oak Table':'Animated Performer',category:args.id==='fixture-object'?'props':'characters',tags:['wood'],animations:['Walk'],catalog:{creator:'Model creator',license:'CC0',downloads:43,poster_key:'assets/test/preview.png'}};
           window.testLibrary.set(item.id,item);return item;
         }
@@ -217,7 +218,16 @@ try {
   await editor.locator('#catalog-search').fill('Oak');
   await page.waitForFunction(()=>window.testCatalogCalls.at(-1)?.q==='Oak');
   await editor.locator('#catalog-grid').getByRole('button',{name:'Add to collection'}).click();
+  const progress=editor.locator('[data-asset="fixture-object"] .catalog-progress');
+  await progress.waitFor({state:'visible'});
+  await page.evaluate(()=>window.testEvents['library-download-progress']({payload:{id:'fixture-object',stage:'downloading',label:'Downloading…',percent:40}}));
+  assert.equal(await progress.getAttribute('value'),'40');
+  await page.evaluate(()=>window.testEvents['library-download-progress']({payload:{id:'fixture-object',stage:'converting',label:'Converting the model on your computer…',percent:null}}));
+  assert.equal(await progress.getAttribute('value'),null,'Conversion progress is indeterminate');
+  await editor.getByRole('button',{name:'Converting…',exact:true}).waitFor();
+  await page.evaluate(()=>window.finishTestDownload());
   await editor.getByRole('button',{name:'In your collection',exact:true}).waitFor();
+  assert.equal(await progress.isVisible(),false);
   await editor.locator('.catalog-downloads').filter({hasText:'43 downloads'}).waitFor();
   assert.equal(await page.evaluate(()=>window.testLibraryReads),0,'Downloading registers metadata without loading unused models');
   await editor.locator('#collection-folder').click();assert.equal(await page.evaluate(()=>window.testFolderOpened),true);

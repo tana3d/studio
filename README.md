@@ -10,7 +10,7 @@ Open **Library → Browse Tana library** to search the tana.gg catalog, browse c
 
 Models you download or import are saved in **Documents/TanaStudio/Library/<asset-id>/**. Personal metadata is stored by an embedded, revision-pinned Zega graph in `Library/.zega/`, with no separate database process. Startup migrates existing manifests and recovers completed downloads missing a metadata commit. Each portable asset folder contains `model.glb` and a backup `asset.json`; catalog downloads also include `preview` and `SOURCE.txt` with source and licence credits. **Show folder** opens the collection. Files remain available after restarting, and saved models and thumbnails work offline. Startup restores metadata; model geometry loads only when you place an asset. Downloads finish before appearing in the collection and repeated downloads reuse the saved copy. Undo changes your scene while preserving your downloaded collection. Scene ZIP exports retain the source metadata of included catalog models.
 
-The browser preview can browse the public catalog; saving to this collection requires the desktop app. GLBs must embed their textures and buffers and be at most 50 MB. Scenes and recordings still need a scene ZIP export before closing.
+The browser preview can browse the public catalog; saving to this collection requires the desktop app. GLBs must embed their textures and buffers and be at most 512 MB. Scenes and recordings still need a scene ZIP export before closing.
 
 ## Development
 
@@ -68,7 +68,7 @@ multiple assets. The original ZIP is retained as `source.zip` beside `model.glb`
 in your collection. Direct Blender imports retain a packed `source.blend` copy;
 your original file is never overwritten. Progress and Cancel remain visible
 while converting. Sources are limited to 256 MB, extracted packages to 512 MB,
-finished GLBs to 50 MB, and conversion to five minutes.
+finished GLBs to 512 MB, and conversion to five minutes.
 
 Supported image materials, rigs and animations are exported. Procedural materials
 may need baking for an exact appearance; embedded Python and animation drivers
@@ -93,3 +93,5 @@ The upstream npm name currently contains a placeholder release. `vendor/rixse` p
 The desktop shell and ChatGPT provider are derived from [zegadb/studio](https://github.com/zegadb/studio), prototype commit `1e9e1b3`. The editor comes from [samifouad/worldbuilder](https://github.com/samifouad/worldbuilder), commit `c1ff2d8`. The source repositories remain intact.
 
 Apache-2.0 for the desktop shell; the imported editor is MIT (see [editor/LICENSE](editor/LICENSE)). Third-party models and fonts retain their licenses. See [NOTICE](NOTICE) and [model attribution](editor/assets/ATTRIBUTION.md).
+
+Catalog Blender files and ZIPs download unchanged, then convert locally with the bundled runtime. The library card shows download percentage, extraction, conversion and saving. Conversion progress is indeterminate because Blender cannot report a reliable percentage. The original source package, converted GLB and source credits stay together in Documents/TanaStudio/Library. Failed conversions never appear as ready; retry keeps the catalog metadata and attribution.

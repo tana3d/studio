@@ -20,7 +20,7 @@ const FORMATS: &[&str] = &[
 ];
 const MAX_SOURCE: u64 = 256 * 1024 * 1024;
 const MAX_UNPACKED: u64 = 512 * 1024 * 1024;
-const MAX_OUTPUT: u64 = 50 * 1024 * 1024;
+const MAX_OUTPUT: u64 = 512 * 1024 * 1024;
 static IMPORT: Mutex<()> = Mutex::new(());
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
@@ -161,7 +161,7 @@ fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     if bytes.len() as u64 > limit {
-        return Err("The converted model is too large. Keep the finished GLB under 50 MB.".into());
+        return Err("The converted model is too large. Keep the finished GLB under 512 MB.".into());
     }
     Ok(bytes)
 }
@@ -269,24 +269,37 @@ fn convert(
     Ok((model, result.warnings, result.blender))
 }
 
-fn import_path(
+pub(crate) struct PreparedModel {
+    pub bytes: Vec<u8>,
+    pub warnings: Vec<String>,
+    pub note: String,
+    pub source: Option<PathBuf>,
+    _work: tempfile::TempDir,
+}
+// Catalog downloads and local imports share the same converter and safeguards.
+pub(crate) fn prepare_catalog_model(
     app: &tauri::AppHandle,
-    category: &str,
     source: &Path,
-) -> Result<ImportedModel, String> {
+    stage: impl Fn(&str, &str),
+) -> Result<PreparedModel, String> {
+    stage("queued", "Waiting for the model converter…");
+    let _guard = IMPORT.lock().map_err(|e| e.to_string())?;
+    CANCEL.store(false, Ordering::Relaxed);
+    prepare_model(app, source, stage)
+}
+fn prepare_model(
+    app: &tauri::AppHandle,
+    source: &Path,
+    stage: impl Fn(&str, &str),
+) -> Result<PreparedModel, String> {
     validate_source(source)?;
     let original_zip = (extension(source) == "zip").then(|| source.to_owned());
     let work = tempfile::Builder::new()
         .prefix("tana-model-import-")
         .tempdir()
         .map_err(|e| e.to_string())?;
-    let name = source
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
     let source = if extension(source) == "zip" {
-        let _ = app.emit("library-import-progress", "Opening the asset package…");
+        stage("extracting", "Opening the asset package…");
         unpack(source, &work.path().join("asset"))?
     } else {
         source.to_owned()
@@ -316,10 +329,7 @@ fn import_path(
     let (bytes, warnings, engine) = if let Some(bytes) = direct {
         (bytes, vec![], "GLB passthrough".into())
     } else {
-        let _ = app.emit(
-            "library-import-progress",
-            "Converting the model on your computer…",
-        );
+        stage("converting", "Converting the model on your computer…");
         let (python, script) = runtime(app)?;
         convert(
             &python,
@@ -332,7 +342,7 @@ fn import_path(
     if CANCEL.load(Ordering::Relaxed) {
         return Err("Import cancelled.".into());
     }
-    let _ = app.emit("library-import-progress", "Saving to your collection…");
+
     let note = format!(
         "Imported from {}\nConverter: {}\n{}\n",
         source.file_name().unwrap_or_default().to_string_lossy(),
@@ -340,17 +350,36 @@ fn import_path(
         warnings.join("\n")
     );
     let packed = work.path().join("source.blend");
-    let preserved = original_zip
-        .as_deref()
-        .or_else(|| packed.is_file().then_some(packed.as_path()));
+    let preserved = original_zip.or_else(|| packed.is_file().then_some(packed));
+    Ok(PreparedModel {
+        bytes,
+        warnings,
+        note,
+        source: preserved,
+        _work: work,
+    })
+}
+fn import_path(
+    app: &tauri::AppHandle,
+    category: &str,
+    source: &Path,
+) -> Result<ImportedModel, String> {
+    let model = prepare_model(app, source, |_, label| {
+        let _ = app.emit("library-import-progress", label);
+    })?;
+    let _ = app.emit("library-import-progress", "Saving to your collection…");
+    let name = source.file_stem().unwrap_or_default().to_string_lossy();
     let asset = library::save_import(
         &library::root(app)?,
         &name,
         category,
-        &bytes,
-        preserved.map(|p| (p, note.as_str())),
+        &model.bytes,
+        model.source.as_deref().map(|p| (p, model.note.as_str())),
     )?;
-    Ok(ImportedModel { asset, warnings })
+    Ok(ImportedModel {
+        asset,
+        warnings: model.warnings,
+    })
 }
 
 #[tauri::command]
