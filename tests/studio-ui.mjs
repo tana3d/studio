@@ -42,6 +42,7 @@ try {
         if (command === 'save_export') { window.testSaves.push(args); return true; }
         if (command === 'chatgpt_ask') {
           window.testRequests.push(args.request);
+          if (args.request.question === 'Empty response') { args.onEvent.onmessage({ kind: 'completed', output: [] }); return; }
           if (args.request.question === 'Add a traffic cone' && !args.request.continuation.length) {
             args.onEvent.onmessage({ kind: 'completed', output: [{ type: 'function_call', namespace: 'studio', name: 'apply_action', call_id: 'cone_call', arguments: JSON.stringify({ type: 'place_asset', payload: JSON.stringify({ asset_id: 'cone', anchor: 'camera_foreground', rotation_y: 0 }) }) }] });
             return;
@@ -181,6 +182,10 @@ try {
   await page.setViewportSize({ width: 1100, height: 720 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 1100);
   assert.equal(await editor.evaluate(() => document.documentElement.scrollWidth), 825);
+  await page.getByRole('textbox', { name: 'Message ChatGPT' }).fill('Empty response');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'completed without a reply or scene action' }).waitFor();
+  assert.equal(await page.getByText('Thinking…', { exact: true }).count(), 0, 'An empty completed response never stays stuck at Thinking');
   await page.getByRole('button', { name: 'New chat' }).click();
   await page.getByRole('heading', { name: 'A world for your story.' }).waitFor();
   assert.deepEqual(errors, []);

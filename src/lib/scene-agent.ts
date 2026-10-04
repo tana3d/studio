@@ -29,10 +29,11 @@ export async function runSceneAgent(options: {
     if (!snapshot) throw new AgentError('The scene is still loading. Try again in a moment.');
     let completed: (output: OutputItem[]) => void = () => {};
     let failed: (error: AgentError) => void = () => {};
+    let receivedText = false;
     const done = new Promise<OutputItem[]>((resolve, reject) => { completed = resolve; failed = reject; });
     const channel = new Channel<Event>();
     channel.onmessage = event => {
-      if (event.kind === 'delta') options.onText(event.text);
+      if (event.kind === 'delta') { receivedText ||= !!event.text; options.onText(event.text); }
       else if (event.kind === 'completed') completed(event.output ?? []);
       else failed(new AgentError(event.message, event.code, event.usage_limited));
     };
@@ -43,7 +44,15 @@ export async function runSceneAgent(options: {
     ]);
     if (options.cancelled()) throw new AgentError('Stopped.', 'stopped');
     const calls = output.filter(item => item.type === 'function_call');
-    if (!calls.length) return activities;
+    if (!calls.length) {
+      if (!receivedText) {
+        const text = output.filter(item => item.type === 'message').flatMap(item => Array.isArray(item.content) ? item.content : [])
+          .map(part => part.type === 'output_text' ? part.text : part.type === 'refusal' ? part.refusal : '').filter(Boolean).join('\n');
+        if (text) options.onText(text);
+        else if (!activities.length) throw new AgentError('ChatGPT completed without a reply or scene action. Please try again.');
+      }
+      return activities;
+    }
     if (calls.length + activities.length > 24) throw new AgentError('The agent reached its edit limit. Completed edits remain available; ask it to continue.');
     continuation.push(...output);
     for (const call of calls) {

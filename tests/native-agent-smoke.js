@@ -40,6 +40,7 @@
     report.uiError = document.querySelector('.error')?.textContent ?? '';
     report.reply = [...document.querySelectorAll('.message.assistant .content')].map(e => e.textContent).join('\n');
     const additions = scene.environment.props.filter(p => !before.ids.includes(p.id));
+    report.additions = additions.map(p => ({ id: p.id, type: p.type, position: p.position }));
     const edited = activities?.find(a => a.name === 'apply_action' && a.args.type === 'place_asset' && a.result.ok);
     if (!edited || additions.length !== 1 || additions[0].type !== 'cone') throw new Error('The real agent did not add exactly one cone. ' + (document.querySelector('.error')?.textContent ?? ''));
     if (before.ids.some(id => !scene.environment.props.some(p => p.id === id)) || JSON.stringify(scene.cameras) !== before.cameras || JSON.stringify(studio.cameraEdit.shots) !== before.shots || JSON.stringify(studio.timeline.items) !== before.performances) throw new Error('An unrelated scene/timeline element changed.');

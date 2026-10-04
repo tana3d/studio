@@ -503,9 +503,30 @@ fn read_stream(
 ) -> Result<()> {
     let mut data = String::new();
     let mut first_word: Option<Duration> = None;
+    let mut completed_items = BTreeMap::new();
     let mut dispatch = |data: &str, send: &mut dyn FnMut(AskEvent)| -> Option<bool> {
         let event: Value = serde_json::from_str(data).ok()?;
+        #[cfg(debug_assertions)]
+        if std::env::var_os("STUDIO_AGENT_SMOKE_REPORT").is_some()
+            && !event["type"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with(".delta")
+        {
+            eprintln!(
+                "Agent stream: {} item={} final_items={}",
+                event["type"].as_str().unwrap_or("unknown"),
+                event["item"]["type"].as_str().unwrap_or("none"),
+                event["response"]["output"].as_array().map_or(0, Vec::len)
+            );
+        }
         match event["type"].as_str()? {
+            "response.output_item.done" => {
+                if let Some(index) = event["output_index"].as_u64() {
+                    completed_items.insert(index, event["item"].clone());
+                }
+                Some(false)
+            }
             "response.output_text.delta" => {
                 first_word.get_or_insert_with(|| started.elapsed());
                 send(AskEvent::Delta {
@@ -517,8 +538,9 @@ fn read_stream(
                 send(AskEvent::Completed {
                     output: event["response"]["output"]
                         .as_array()
+                        .filter(|items| !items.is_empty())
                         .cloned()
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| completed_items.values().cloned().collect()),
                     tokens: Tokens::from_usage(&event["response"]["usage"]),
                     elapsed_ms: started.elapsed().as_millis() as u64,
                     first_word_ms: first_word.map(|d| d.as_millis() as u64),
@@ -1389,6 +1411,21 @@ mod tests {
             })
         );
         assert!(first_word_ms.is_some());
+    }
+
+    #[test]
+    fn completed_stream_items_survive_a_summary_only_final_event() {
+        let events = stream(concat!(
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"encrypted_content\":\"opaque\"}}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"apply_action\",\"arguments\":\"{}\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n",
+        ));
+        let [AskEvent::Completed { output, .. }] = &events[..] else {
+            panic!("expected completion");
+        };
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0]["encrypted_content"], "opaque");
+        assert_eq!(output[1]["call_id"], "c1");
     }
 
     #[test]

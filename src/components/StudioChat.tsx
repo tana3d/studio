@@ -99,7 +99,7 @@ export default function StudioChat({ editor }: { editor: RefObject<HTMLIFrameEle
     </div>
     <div className="messages" role="log" aria-label="Conversation messages" aria-live="polite">
       {!messages.length && <div className="welcome"><h1>A world for your story.</h1><p>Plan the scene, direct your characters, and find the right shot with ChatGPT beside you.</p><p>Build and record in the editor on the right.</p></div>}
-      {messages.map((message, i) => <article className={`message ${message.role}`} key={i}><div className="speaker">{message.role === 'user' ? 'You' : 'ChatGPT'}</div><div className="content">{message.content ? <AnswerText text={message.content} /> : <p>Thinking…</p>}</div></article>)}<div ref={end} />
+      {messages.map((message, i) => <article className={`message ${message.role}`} key={i}><div className="speaker">{message.role === 'user' ? 'You' : 'ChatGPT'}</div><div className="content">{message.content ? <AnswerText text={message.content} /> : <p>{busy ? 'Thinking…' : 'No text response returned.'}</p>}</div></article>)}<div ref={end} />
     </div>
     {error && <p className="error" role="alert">{error}{usageLimited && <button onClick={() => void invoke('plugin:opener|open_url', { url: 'https://chatgpt.com/settings/usage' }).catch(e => setError(String(e)))}>Manage usage</button>}</p>}
     <form className="composer" onSubmit={e => { e.preventDefault(); void send(); }}>
