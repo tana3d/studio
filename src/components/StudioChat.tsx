@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import AnswerText from './AnswerText';
+import { DrawerIcon } from './ChatPanelControls';
 
 type Account = { status: 'signed_out' | 'pending' | 'signed_in'; email: string | null; error: string | null };
 type Model = { slug: string; display_name: string };
@@ -77,8 +78,8 @@ export default function StudioChat({ editor }: { editor: RefObject<HTMLIFrameEle
     finally { active.current = false; setBusy(false); }
   }
 
-  return <aside className="chat-pane" aria-label="ChatGPT conversation">
-    <header className="chat-header"><div className="brand"><strong>Studio</strong><span>by tana</span></div><button disabled={busy || !messages.length} onClick={() => { setMessages([]); setError(''); setUsageLimited(false); }}>New chat</button></header>
+  return <aside id="studio-chat" className="chat-pane" aria-label="ChatGPT conversation">
+    <header className="chat-header"><div className="brand"><strong>Studio</strong><span>by tana</span></div><div className="chat-header-actions"><button disabled={busy || !messages.length} onClick={() => { setMessages([]); setError(''); setUsageLimited(false); }}>New chat</button><button className="chat-collapse" aria-label="Collapse chat" title="Collapse chat" aria-controls="studio-chat" aria-expanded={true} onClick={() => window.dispatchEvent(new Event('studio-toggle-chat'))}><DrawerIcon /></button></div></header>
     <div className="account">
       {account.status === 'signed_in' ? <><span>{account.email ?? 'Connected to ChatGPT'}</span><button disabled={busy || connecting} onClick={() => void accountAction('chatgpt_disconnect')}>Disconnect</button><select aria-label="ChatGPT model" value={model} disabled={busy || !models.length} onChange={e => setModel(e.target.value)}>{!models.length && <option value="">Loading models…</option>}{models.map(m => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}</select></> : account.status === 'pending' ? <><span>Finish signing in in your browser.</span><button disabled={connecting} onClick={() => void accountAction('chatgpt_cancel')}>Cancel sign-in</button></> : <button className="primary" disabled={!native || connecting} onClick={() => void accountAction('chatgpt_start')}>Sign in with ChatGPT</button>}
     </div>

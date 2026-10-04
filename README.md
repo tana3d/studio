@@ -2,7 +2,7 @@
 
 Build worlds, direct character performances, arrange camera angles, and export your story.
 
-Studio combines a local Three.js scene editor with a ChatGPT conversation in a Tauri desktop app. Chat occupies one third of the window; the scene editor occupies two thirds. The editor is bundled into the app and works without a separate server.
+Studio combines a local Three.js scene editor with a ChatGPT conversation in a Tauri desktop app. Chat starts at one quarter of the window. Drag the divider to resize it, or use the drawer icon to collapse and reopen it. Resizing and collapsing keep your scene and conversation intact. The editor is bundled into the app and works without a separate server.
 
 ## Development
 
