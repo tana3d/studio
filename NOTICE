@@ -11,3 +11,6 @@ Third-party software and assets:
 - Cesium Man, copyright 2017 Cesium, CC BY 4.0; logo trademark notice applies.
 - RobotExpressive by Tomas Laulhe (Quaternius), CC0 1.0, converted by Don McCurdy.
 See editor/assets/ATTRIBUTION.md for sources and the model trademark notice.
+
+Rixse core (vendor/rixse): Copyright Rixse contributors, Apache-2.0.
+Pinned upstream commit b4e71b42b90b8635a743838db747f5c5ddf134e3 from https://github.com/rixsedev/rixse.

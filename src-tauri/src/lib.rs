@@ -2,6 +2,7 @@ mod chatgpt;
 mod export;
 mod loopback;
 mod native_smoke;
+mod scene_tools;
 
 use chatgpt::ChatGptState;
 use std::sync::Arc;
@@ -38,6 +39,13 @@ pub fn run() {
                 && std::env::var_os("STUDIO_SMOKE_REPORT").is_some()
             {
                 let _ = _webview.eval(include_str!("../../tests/native-smoke.js"));
+            }
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && _webview.label() == "main"
+                && std::env::var_os("STUDIO_AGENT_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-agent-smoke.js"));
             }
         })
         .setup(|app| {

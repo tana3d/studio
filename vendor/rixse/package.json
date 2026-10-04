@@ -1,0 +1,34 @@
+{
+  "name": "rixse",
+  "version": "0.1.0",
+  "description": "Agentic UI: ui = view(state), and the agent writes state through the same typed actions you do.",
+  "homepage": "https://rixse.dev",
+  "repository": "https://rixse.dev",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agentic-ui",
+    "ui",
+    "agent",
+    "state"
+  ],
+  "files": [
+    "src",
+    "index.d.ts",
+    "README.md"
+  ],
+  "main": "./src/index.js",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js && tsc -p test/tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "types": "./index.d.ts"
+}

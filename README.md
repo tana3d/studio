@@ -28,6 +28,8 @@ Build distributables with `npm run tauri -- build`. Artifacts land in `.target/r
 
 To smoke-test the actual OS webview, create `.tmp` and launch dev mode with `STUDIO_SMOKE_REPORT="$PWD/.tmp/native-smoke.json"`. This opt-in debug test loads the scene and exports/decodes a short video without signing in or calling a model. Close the test app afterward and launch normal dev mode for a fresh scene.
 
+To test a real agent edit, launch dev mode with `STUDIO_AGENT_SMOKE_REPORT="$PWD/.tmp/native-agent.json"` and sign in with ChatGPT in Studio. This explicitly opt-in test uses your selected model to add one traffic cone through Rixse, verifies that existing objects/cameras/performances remain intact, and leaves the cone visible. It consumes your ChatGPT plan usage. The browser integration test uses a provider fixture and does not call a model.
+
 ## What is included
 
 - Asset library, GLB imports, animated performers, character and camera controls.
@@ -35,17 +37,24 @@ To smoke-test the actual OS webview, create `.tmp` and launch dev mode with `STU
 - Landscape 16:9 and vertical 9:16 video framing, MP4/WebM and quality selection where supported by the host's webview.
 - Native save dialogs for footage and scene ZIP exports. Unzip scene exports to get the footage folder.
 - Sign in with ChatGPT, dynamically supplied model choices, streaming conversation, Stop and New chat.
-- Optional scene context with camera and performance descriptions; never sends mesh buffers, animation frames, or local files automatically.
+- Automatic Rixse scene context and asset library metadata whenever the agent works. The current camera view is sent separately as a JPEG capped at 1024 pixels on its longest side. Object selection and projected screen positions connect references like “this light” to stable scene handles. Named anchors (camera foreground, near the selected character, alley center) and exact metre coordinates support placement without requiring markers.
+- Typed Rixse actions to add library props/characters and move/delete props, with validation, collision checks, author attribution and global Undo/Redo. Mesh buffers, animation frames and local file contents stay local.
 
 The inherited desktop search UI, menu-bar/tray app, global shortcuts, file crawler/index, Deka runtime, app generation, terminal, and Zega account/update services have been removed. The scene editor retains its movement and editing controls. See [editor controls and details](docs/editor.md).
 
 ## Current boundaries
 
-ChatGPT helps plan scenes and shots. It cannot manipulate the scene or generate/rig/animate assets yet. Its model list depends on the signed-in account and the provider's supported models. Credentials live in Studio's own OS credential vault; access tokens stay in the native process and are never exposed to the editor.
+ChatGPT can edit the live scene through Rixse actions, including while reviewing a paused timeline. It cannot generate/rig/animate assets or edit camera/performance clips yet. Its model list depends on the signed-in account and the provider's supported models. Credentials live in Studio's own OS credential vault; access tokens stay in the native process and are never exposed to the editor.
 
 Conversations and scenes remain in memory for this prototype. Download a scene ZIP before closing when you want to preserve its assets and recorded footage; project import is not implemented yet. Video exports have no audio. Export codec support varies by the operating system's webview, and unsupported choices are disabled.
 
 The browser preview can use the editor but cannot sign in with ChatGPT. Use Tauri dev mode for the complete desktop app.
+
+## Rixse integration
+
+The scene bridge uses Rixse `defineAction`, `createStore`, validation and `createWire`. The model reads compact entity handles plus the action vocabulary; `studio.apply_action` transports its proposal to the editor. Three.js projects accepted edits and retains asset geometry locally. Global edit transactions use Rixse state/undo with the existing bounded history providing redo. Character additions from the library and the agent use the same scene action; interactive object drags retain their preview behavior and commit through the global Rixse history.
+
+The upstream npm name currently contains a placeholder release. `vendor/rixse` pins the real Apache-2.0 core from `rixsedev/rixse` commit `b4e71b42b90b8635a743838db747f5c5ddf134e3`; it is a local package dependency, not a rewritten copy.
 
 ## Origin and license
 

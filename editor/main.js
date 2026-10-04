@@ -7,6 +7,8 @@ import { EditHistory } from './history.mjs';
 import { extraAssets, buildExtra } from './props-extra.js';
 import { zipSync, strToU8 } from 'fflate';
 import './desktop.js';
+import { resolvePlacement } from './agent-placement.mjs';
+import { createSceneBridge } from './rixse-scene.mjs';
 
 // ============================================================
 // THE WORLD IS DATA.
@@ -202,7 +204,9 @@ const PROP_BUILDERS = { ...Object.fromEntries(extraAssets.map(a => [a.id, (paren
 const props = [];
 let propSeq = 0;
 function addProp(spec) {
+  spec.id ??= crypto.randomUUID();
   const group = new THREE.Group();
+  group.userData.objectId = spec.id;
   const collBefore = colliders.length;
   const flickBefore = flickering.length;
   PROP_BUILDERS[spec.type](group, spec);
@@ -328,7 +332,7 @@ let selectedActor = 'Vale';
 let worldTime = 0;
 let loadingModels = 0;
 const importedAssets = [];
-let actorSequence = SCENE.characters.length, importSequence = 0;
+let importSequence = 0;
 const actorReady = Promise.all(SCENE.characters.map(async spec => {
   const actor = await createActor(characterAssets.find(a => a.id === spec.assetId), spec);
   actors[spec.name] = actor;
@@ -980,20 +984,11 @@ function renderLibrary() {
       if(drag?.placing)cancelPlacement();else if(drag)return;
       ctxPoint = { x: THREE.MathUtils.clamp(camera.position.x,-4,4), y: 0, z: THREE.MathUtils.clamp(camera.position.z - 4,-36,5), onWall: false };
       if (libraryTab === 'props') { startPlacement(asset.id); return; }
-      prepareAssetEdit();
-      history.begin('Add character'); button.disabled = true; loadingModels++;
+      button.disabled = true;
       try {
-        let position = null;
-        for (let z = ctxPoint.z; z < 7 && !position; z += 1) for (const x of [0, -1.5, 1.5, -3, 3]) {
-          if (validAt(x, z, .64, .64, 0, 1.85) && !Object.values(actors).some(a => a.present && a.group.position.distanceTo(new THREE.Vector3(x, 0, z)) < .8)) { position = [x, 0, z]; break; }
-        }
-        if (!position) throw new Error('No clear spawn location. Move the camera and try again.');
-        const spec = { name: `${asset.name} ${++actorSequence}`, assetId: asset.id, position, speed: 1.5 };
-        const actor = await createActor(asset, spec);
-        actors[spec.name] = actor; scene.add(actor.group); SCENE.characters.push(spec);
-        selectedActor = spec.name; timeline.includeActors(); refreshCast(); refreshJson(); history.commit(); hint(`${spec.name} added. ${timeline.mode==='live'?'Choose Control character to perform.':'Press Record movement to add their layer at the playhead.'}`);
-      } catch (error) { history.discard(); hint(`Could not add character: ${error.message}`); }
-      finally { loadingModels--; button.disabled = false; }
+        const result = await rixseScene.dispatch({ type: 'place_asset', payload: { asset_id: asset.id, anchor: 'camera_foreground' } }, 'you');
+        if (!result.ok) hint(`Could not add character: ${result.error}`);
+      } finally { button.disabled = false; }
     };
     list.appendChild(button);
   }
@@ -1654,13 +1649,126 @@ function resizeViewport(){
 new ResizeObserver(resizeViewport).observe(viewport);
 resizeViewport();
 
-// Read-only scene context for the sibling desktop conversation. No model code runs here.
-window.studioContext = () => ({
+// The agent calls engine operations, never evaluates generated JavaScript.
+function agentAnchors() {
+  updateCamera();
+  const forward = camera.getWorldDirection(new THREE.Vector3()); forward.y = 0;
+  if (forward.lengthSq() < .01) forward.set(0, 0, -1); else forward.normalize();
+  const foreground = camera.position.clone().addScaledVector(forward, 4);
+  const anchors = {
+    camera_foreground: { name: 'In front of the current camera', position: [THREE.MathUtils.clamp(foreground.x, -3.5, 3.5), 0, THREE.MathUtils.clamp(foreground.z, -37, 6)] },
+    alley_center: { name: 'Middle of the alley', position: [0, 0, -16] },
+    left_wall: { name: 'Near the left wall', position: [-3.6, 0, -14] },
+    right_wall: { name: 'Near the right wall', position: [3.6, 0, -14] },
+  };
+  const actor = actors[selectedActor];
+  if (actor?.present) anchors.near_character = { name: `Near ${selectedActor}`, position: [actor.group.position.x + 1.2, 0, actor.group.position.z + .8] };
+  for (const rec of props) anchors[`object:${rec.spec.id}`] = { name: `At ${rec.spec.type}`, position: rec.group.position.toArray() };
+  return anchors;
+}
+function agentLibrary() {
+  return [...propAssets.map(asset => ({ id: asset.id, name: asset.name, category: 'props', description: asset.detail, footprint: FOOTPRINTS[asset.id], height: PROP_HEIGHTS[asset.id] ?? .7 })),
+    ...characterAssets.map(asset => ({ id: asset.id, name: asset.name, category: 'characters', description: asset.detail, footprint: [.64, .64], height: 1.85 }))];
+}
+const sceneSnapshot = () => cloneData({
   scene: SCENE,
+  objects: props.map(rec => ({ id: rec.spec.id, assetId: rec.spec.type, position: rec.group.position.toArray(), rotationY: rec.rotY })),
+  characters: Object.entries(actors).filter(([, a]) => a.present).map(([name, a]) => ({ name, assetId: a.spec.assetId, position: a.group.position.toArray(), rotationY: a.group.rotation.y })),
+  reservedCharacterNames: Object.keys(actors),
+  library: agentLibrary(), anchors: agentAnchors(),
+  coordinates: { units: 'metres', axes: 'X across alley; Y up; negative Z deeper into alley', min: [-4.2, 0, -39], max: [4.2, 9, 7.4] },
+  view: { name: SCENE.cameras[camIndex]?.name ?? 'Free camera', position: camera.position.toArray(), direction: camera.getWorldDirection(new THREE.Vector3()).toArray(), right: new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).toArray() },
   cameras: cameraEdit.shots,
   performances: timeline.items.map(({frames,world,...clip}) => clip),
-  duration: timeline.duration,
-  time: timeline.time,
-  videoFrame: videoSettings.aspect,
+  duration: timeline.duration, time: timeline.time, mode: timeline.mode, videoFrame: videoSettings.aspect,
 });
+function agentClear(asset, rotation, ignore = []) {
+  const [w, d] = asset.footprint ?? [0, 0], c = Math.abs(Math.cos(rotation)), s = Math.abs(Math.sin(rotation));
+  return ([x, y, z]) => y >= 0 && y <= 9 && validAt(x, z, w*c+d*s, w*s+d*c, y, asset.height, ignore)
+    && (asset.height === 0 || !Object.values(actors).some(actor => actor.present && y < actor.group.position.y + 1.85 && y + asset.height > actor.group.position.y && Math.abs(x-actor.group.position.x) < (w*c+d*s)/2+.32 && Math.abs(z-actor.group.position.z) < (w*s+d*c)/2+.32));
+}
+function agentEditReady() {
+  if (!window.__studio.ready || recorder || loadingModels || drag || look || clipDrag || shotDrag || pendingShot || history.pending || timeline.mode === 'recording') throw new Error('Finish the current recording, placement or edit before changing the scene.');
+}
+const rixseScene = createSceneBridge({
+  read: sceneSnapshot,
+  clear: (asset, rotation, ignoreId) => agentClear(asset, rotation, props.find(rec => rec.spec.id === ignoreId)?.colliders ?? []),
+  project: async ({ type, asset, record }, author) => {
+    agentEditReady(); prepareAssetEdit();
+    const label = `${author === 'agent' ? 'Agent: ' : ''}${type === 'place_asset' ? 'add ' + asset.name : type === 'move_prop' ? 'move object' : 'delete object'}`;
+    if (type === 'delete_prop') {
+      const rec = props.find(p => p.spec.id === record.id);
+      history.run(label, () => { removeProp(rec); refreshJson(); }, author); return;
+    }
+    if (type === 'move_prop') {
+      const rec = props.find(p => p.spec.id === record.id);
+      history.run(label, () => { rec.group.position.fromArray(record.position); rec.elev = record.position[1]; rec.rotY = record.rotationY; rec.group.rotation.y = rec.baseRotY + rec.rotY; updateSpec(rec); setCollidersAt(rec); refreshJson(); }, author); return;
+    }
+    if (asset.category === 'characters') {
+      history.begin(label, author); loadingModels++;
+      try {
+        const spec = { id: record.id, name: record.name, assetId: asset.id, position: record.position, speed: 1.5 };
+        const actor = await createActor(characterAssets.find(a => a.id === asset.id), spec);
+        actor.group.rotation.y = record.rotationY; actors[spec.name] = actor; scene.add(actor.group); SCENE.characters.push(spec);
+        selectedActor = spec.name; timeline.includeActors(); refreshCast(); refreshJson(); history.commit();
+      } catch (error) { history.discard(); throw error; } finally { loadingModels--; }
+    } else {
+      const spec = { ...PROP_DEFAULTS[asset.id], id: record.id, type: asset.id, position: record.position, rotationY: record.rotationY };
+      history.run(label, () => { const added = addProp(spec); SCENE.environment.props.push(spec); setCollidersAt(added); refreshJson(); }, author);
+    }
+    hint(`${asset.name} added${author === 'agent' ? ' by the agent' : ''} · Undo to remove`);
+  },
+});
+window.__studio.rixse = rixseScene;
+window.studioContext = () => {
+  const { coordinates, view, cameras, performances, duration, time, mode, videoFrame } = sceneSnapshot();
+  const rixse = rixseScene.encode();
+  const selection = {
+    object: selected ? rixseScene.wire.handle('object', selected.spec.id) : null,
+    anchor: selected ? rixseScene.wire.handle('anchor', `object:${selected.spec.id}`) : null,
+    character: selectedActor ? rixseScene.wire.handle('character', selectedActor) : null,
+  };
+  view.objectScreenPositions = props.flatMap(rec => {
+    const center = new THREE.Box3().setFromObject(rec.group).getCenter(new THREE.Vector3()).project(camera);
+    return center.z >= -1 && center.z <= 1 && Math.abs(center.x) <= 1 && Math.abs(center.y) <= 1
+      ? [{ object: rixseScene.wire.handle('object', rec.spec.id), x: (center.x + 1)/2, y: (1-center.y)/2 }] : [];
+  });
+  return { rixse, selection, coordinates, view, cameras, performances, duration, time, mode, videoFrame };
+};
+window.studioViewImage = () => {
+  // Read immediately after rendering, before WebGL discards its back buffer.
+  // This is the current frame (including camera transitions), never the desktop.
+  renderScene();
+  const source = renderer.domElement, image = document.createElement('canvas');
+  const scale = Math.min(1, 1024 / Math.max(source.width, source.height));
+  image.width = Math.max(1, Math.round(source.width * scale)); image.height = Math.max(1, Math.round(source.height * scale));
+  image.getContext('2d').drawImage(source, 0, 0, image.width, image.height);
+  return image.toDataURL('image/jpeg', .8);
+};
+window.studioAgent = {
+  async executeTool(name, args = {}) {
+    try {
+      if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be an object.');
+      if (name === 'get_scene') return { ok: true, ...window.studioContext() };
+      if (name === 'list_library') return { ok: true, ...rixseScene.encode() };
+      if (name === 'apply_action') {
+        agentEditReady();
+        if (typeof args.payload !== 'string' || args.payload.length > 16000) throw new Error('Provide a JSON action payload.');
+        return await rixseScene.dispatch({ type: args.type, payload: JSON.parse(args.payload) }, 'agent');
+      }
+      if (name === 'find_placements') {
+        // Resolve the asset handle with the same Rixse parameter vocabulary.
+        const resolved = rixseScene.wire.resolve({ type: 'place_asset', payload: { asset_id: args.asset_id, anchor: args.anchor } }, { asset_id: { ref: 'asset' }, anchor: { ref: 'anchor' } }).payload;
+        const asset = agentLibrary().find(a => a.id === resolved.asset_id); if (!asset) throw new Error('Unknown library asset.');
+        const anchors = agentAnchors(), names = resolved.anchor ? [resolved.anchor] : Object.keys(anchors).filter(a => !a.startsWith('object:'));
+        const positions = [];
+        for (const anchor of names) {
+          try { positions.push({ anchor, ...resolvePlacement({ anchor }, anchors, agentClear(asset, 0)) }); } catch { /* Other anchors can still be clear. */ }
+        }
+        return { ok: true, positions };
+      }
+      throw new Error('Unknown Studio tool.');
+    } catch (error) { return { ok: false, error: error.message }; }
+  },
+};
 window.studioNotice = hint;
