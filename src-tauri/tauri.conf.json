@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "zega",
+  "productName": "Studio",
   "version": "0.1.0",
-  "identifier": "earth.zega.desktop",
+  "identifier": "com.tana3d.studio",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:1420",
@@ -15,40 +15,28 @@
     "windows": [
       {
         "label": "main",
-        "title": "zega",
-        "decorations": false,
-        "width": 1200,
-        "height": 820,
-        "minWidth": 900,
-        "minHeight": 640,
-        "visible": false
+        "title": "Studio \u00b7 tana",
+        "width": 1500,
+        "height": 960,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "decorations": true,
+        "visible": true
       }
     ],
     "security": {
-      "assetProtocol": {
-        "enable": true,
-        "scope": [
-          "$PICTURE/**"
-        ]
-      },
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://account.zega.earth; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: ipc: http://ipc.localhost; frame-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'"
     }
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "icon": [
-      "icons/icon.png",
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "updater": {
-      "active": true,
-      "endpoints": [
-        "https://releases.zega.earth/desktop/{channel}.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2ODJFNkMxNjU3NERDNkUKUldSdTNIUmx3ZWFDdHRBMEo5ZDdkU25QckFxS0cxZUpsQmppMWlydmdLdHdDVW5tK2pvNElFUmQK"
-    }
   }
 }

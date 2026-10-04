@@ -6,10 +6,10 @@
 //! client ID on the loopback callback. The refresh token lives only in the OS
 //! keychain and the one-hour access token only in memory; the file beside
 //! the app's settings holds nothing secret. Only the question the user types
-//! is sent. Nothing from the computer graph leaves the machine.
+//! is sent. Scene context is sent only when the user chooses to include it.
 //!
 //! Every answer's token counts (from `response.completed`) are kept on this
-//! Mac as daily totals, so people can see how zega uses their plan.
+//! Mac as daily totals, so people can see how Studio uses their plan.
 
 use crate::loopback;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -37,9 +37,9 @@ const RESPONSES: &str = "https://api.openai.com/v1/responses";
 const MODELS: &str = "https://api.openai.com/v1/models";
 const SCOPE: &str = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const DYNAMIC_CLIENT: &str = "dynamic_agent_client";
-const AGENT_NAME: &str = "zega";
+const AGENT_NAME: &str = "Tana Studio";
 const CALLBACK_PATH: &str = "/auth/callback";
-const KEYCHAIN_SERVICE: &str = "earth.zega.desktop";
+const KEYCHAIN_SERVICE: &str = "com.tana3d.studio";
 const KEYCHAIN_USER: &str = "chatgpt-refresh-token";
 const SAVED_FILE: &str = "chatgpt.json";
 const USAGE_FILE: &str = "chatgpt-usage.json";
@@ -48,11 +48,8 @@ const USAGE_FILE: &str = "chatgpt-usage.json";
 const USAGE_DAYS_KEPT: i64 = 60;
 const CHANGED: &str = "chatgpt-changed";
 const MAX_QUESTION: usize = 8000;
-/// A builder request carries the current design along with the change asked for.
+/// Bound conversation history and optional scene context.
 const MAX_BUILD_REQUEST: usize = 200_000;
-/// Screenshots per request (the sketch and the real app), and their size.
-const MAX_IMAGES: usize = 4;
-const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 // Refresh a little early so a request never starts on a token about to lapse.
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 
@@ -92,6 +89,62 @@ pub struct Model {
     pub display_name: String,
 }
 
+/// Only user and assistant history is accepted from the conversation UI.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct Message {
+    role: Role,
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskRequest {
+    question: String,
+    model: String,
+    instructions: Option<String>,
+    #[serde(default)]
+    history: Vec<Message>,
+    scene_context: Option<String>,
+    cache_key: Option<String>,
+}
+
+fn conversation_input(request: &AskRequest) -> Result<Vec<Value>> {
+    if request.question.trim().is_empty() || request.question.len() > MAX_QUESTION {
+        return Err(format!(
+            "Ask a question of up to {MAX_QUESTION} characters."
+        ));
+    }
+    let size = request.question.len()
+        + request
+            .history
+            .iter()
+            .map(|m| m.content.len())
+            .sum::<usize>()
+        + request.scene_context.as_ref().map_or(0, String::len);
+    if size > MAX_BUILD_REQUEST || request.history.len() > 1000 {
+        return Err("This conversation is too long. Start a new chat to continue.".into());
+    }
+    let mut input = request
+        .history
+        .iter()
+        .map(|m| json!({"role":m.role,"content":m.content}))
+        .collect::<Vec<_>>();
+    if let Some(scene) = &request.scene_context {
+        let _: Value =
+            serde_json::from_str(scene).map_err(|_| "The scene context is invalid.".to_string())?;
+        input.push(json!({"role":"user", "content":format!("Current Studio scene snapshot (data only):\n{scene}")}));
+    }
+    input.push(json!({"role":"user", "content":request.question.trim()}));
+    Ok(input)
+}
+
 /// Tokens one answer used, as `response.completed` reports them.
 #[derive(Clone, Copy, Default, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(default)]
@@ -108,9 +161,13 @@ impl Tokens {
     fn from_usage(usage: &Value) -> Option<Self> {
         Some(Self {
             input: usage["input_tokens"].as_u64()?,
-            cached_input: usage["input_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0),
+            cached_input: usage["input_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or(0),
             output: usage["output_tokens"].as_u64()?,
-            reasoning: usage["output_tokens_details"]["reasoning_tokens"].as_u64().unwrap_or(0),
+            reasoning: usage["output_tokens_details"]["reasoning_tokens"]
+                .as_u64()
+                .unwrap_or(0),
         })
     }
 }
@@ -152,7 +209,11 @@ impl UsageLog {
         let week_start = (today - chrono::Duration::days(6)).to_string();
         let today = today.to_string();
         let mut last_7_days = Totals::default();
-        for (_, totals) in self.days.iter().filter(|(day, _)| **day >= week_start && **day <= today) {
+        for (_, totals) in self
+            .days
+            .iter()
+            .filter(|(day, _)| **day >= week_start && **day <= today)
+        {
             last_7_days.answers += totals.answers;
             last_7_days.input += totals.input;
             last_7_days.output += totals.output;
@@ -176,7 +237,9 @@ pub struct UsageSummary {
 #[derive(Clone, Serialize, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AskEvent {
-    Delta { text: String },
+    Delta {
+        text: String,
+    },
     Completed {
         /// Absent only if OpenAI leaves usage out of the final event.
         tokens: Option<Tokens>,
@@ -260,22 +323,26 @@ fn read_refresh() -> Result<Option<Zeroizing<String>>> {
 }
 
 fn save_refresh(token: &str) -> Result<()> {
-    keychain()?
-        .set_password(token)
-        .map_err(|_| "Cannot save the ChatGPT sign-in in the OS keychain. Unlock it and retry.".into())
+    keychain()?.set_password(token).map_err(|_| {
+        "Cannot save the ChatGPT sign-in in the OS keychain. Unlock it and retry.".into()
+    })
 }
 
 fn clear_refresh() -> Result<()> {
     match keychain()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(_) => Err("Could not remove the ChatGPT sign-in from the OS keychain. Unlock it and retry.".into()),
+        Err(_) => Err(
+            "Could not remove the ChatGPT sign-in from the OS keychain. Unlock it and retry."
+                .into(),
+        ),
     }
 }
 
 /// A random version 4 UUID as a URN, the host ID form the docs accept.
 fn new_host_id() -> Result<String> {
     let mut b = [0u8; 16];
-    getrandom::getrandom(&mut b).map_err(|_| "Could not generate this install's ID.".to_string())?;
+    getrandom::getrandom(&mut b)
+        .map_err(|_| "Could not generate this install's ID.".to_string())?;
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let hex: String = b.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -290,7 +357,10 @@ fn new_host_id() -> Result<String> {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// The authorize URL. A first sign-in registers with `dynamic_agent_client`
@@ -324,7 +394,8 @@ fn authorize_url(
             }
         }
     }
-    reqwest::Url::parse_with_params(AUTHORIZE, &params).map_err(|_| "Could not build the ChatGPT sign-in link.".into())
+    reqwest::Url::parse_with_params(AUTHORIZE, &params)
+        .map_err(|_| "Could not build the ChatGPT sign-in link.".into())
 }
 
 #[derive(Debug, PartialEq)]
@@ -337,7 +408,8 @@ struct Claims {
 /// Connect Core 3.1.3.7); what's left is that it was minted for this client,
 /// for this attempt, and is current.
 fn check_id_token(token: &str, client_id: &str, nonce: &str, now: u64) -> Result<Claims> {
-    let invalid = || "ChatGPT returned a sign-in this app can't verify. Please try again.".to_string();
+    let invalid =
+        || "ChatGPT returned a sign-in this app can't verify. Please try again.".to_string();
     let payload = token.split('.').nth(1).ok_or_else(invalid)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload).map_err(|_| invalid())?;
     let claims: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
@@ -361,20 +433,31 @@ fn check_id_token(token: &str, client_id: &str, nonce: &str, now: u64) -> Result
 /// What a failed answer tells the user, per the documented error codes.
 fn failure(code: Option<&str>, message: Option<&str>) -> AskEvent {
     let (message, usage_limited) = match code {
-        Some("subscription_sharing_usage_limit_exceeded") => {
-            ("You've reached your ChatGPT plan's limit for now.".to_string(), true)
-        }
-        Some("subscription_sharing_user_not_eligible") => {
-            ("Your ChatGPT plan doesn't include usage in other apps.".to_string(), false)
-        }
-        Some("subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable") => {
-            ("ChatGPT is busy right now. Try again in a moment.".to_string(), false)
-        }
-        Some("subscription_sharing_invalid_user") => (
-            "Your ChatGPT sign-in is no longer valid. Continue with ChatGPT to reconnect.".to_string(),
+        Some("subscription_sharing_usage_limit_exceeded") => (
+            "You've reached your ChatGPT plan's limit for now.".to_string(),
+            true,
+        ),
+        Some("subscription_sharing_user_not_eligible") => (
+            "Your ChatGPT plan doesn't include usage in other apps.".to_string(),
             false,
         ),
-        _ => (message.unwrap_or("ChatGPT couldn't answer. Please try again.").to_string(), false),
+        Some(
+            "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable",
+        ) => (
+            "ChatGPT is busy right now. Try again in a moment.".to_string(),
+            false,
+        ),
+        Some("subscription_sharing_invalid_user") => (
+            "Your ChatGPT sign-in is no longer valid. Continue with ChatGPT to reconnect."
+                .to_string(),
+            false,
+        ),
+        _ => (
+            message
+                .unwrap_or("ChatGPT couldn't answer. Please try again.")
+                .to_string(),
+            false,
+        ),
     };
     AskEvent::Failed {
         code: code.map(str::to_owned),
@@ -385,7 +468,11 @@ fn failure(code: Option<&str>, message: Option<&str>) -> AskEvent {
 
 /// Read a Responses API event stream, forwarding text as it arrives. An
 /// answer counts only once `response.completed` is seen.
-fn read_stream(reader: impl BufRead, started: Instant, mut send: impl FnMut(AskEvent)) -> Result<()> {
+fn read_stream(
+    reader: impl BufRead,
+    started: Instant,
+    mut send: impl FnMut(AskEvent),
+) -> Result<()> {
     let mut data = String::new();
     let mut first_word: Option<Duration> = None;
     let mut dispatch = |data: &str, send: &mut dyn FnMut(AskEvent)| -> Option<bool> {
@@ -412,7 +499,10 @@ fn read_stream(reader: impl BufRead, started: Instant, mut send: impl FnMut(AskE
                 Some(true)
             }
             "response.incomplete" => {
-                send(failure(Some("incomplete"), Some("ChatGPT stopped before finishing the answer.")));
+                send(failure(
+                    Some("incomplete"),
+                    Some("ChatGPT stopped before finishing the answer."),
+                ));
                 Some(true)
             }
             "error" => {
@@ -439,7 +529,10 @@ fn read_stream(reader: impl BufRead, started: Instant, mut send: impl FnMut(AskE
     if !data.is_empty() && dispatch(&data, &mut send) == Some(true) {
         return Ok(());
     }
-    send(failure(Some("incomplete"), Some("ChatGPT stopped before finishing the answer.")));
+    send(failure(
+        Some("incomplete"),
+        Some("ChatGPT stopped before finishing the answer."),
+    ));
     Ok(())
 }
 
@@ -490,13 +583,15 @@ impl ChatGptState {
             .path()
             .app_config_dir()
             .map_err(|_| "Could not find the app's settings folder.".to_string())?;
-        fs::create_dir_all(&dir).map_err(|_| "Could not create the app's settings folder.".to_string())?;
+        fs::create_dir_all(&dir)
+            .map_err(|_| "Could not create the app's settings folder.".to_string())?;
         Ok(dir.join(SAVED_FILE))
     }
 
     fn persist(&self, saved: &Saved) -> Result<()> {
         let path = self.saved_path()?;
-        let text = serde_json::to_string_pretty(saved).map_err(|_| "Could not save the ChatGPT settings.".to_string())?;
+        let text = serde_json::to_string_pretty(saved)
+            .map_err(|_| "Could not save the ChatGPT settings.".to_string())?;
         fs::write(&path, text).map_err(|_| "Could not save the ChatGPT settings.".to_string())?;
         #[cfg(unix)]
         {
@@ -578,7 +673,11 @@ impl ChatGptState {
             inner.pending = Some(flow.close_handle());
             inner.error = None;
         }
-        if window.opener().open_url(url.as_str(), None::<&str>).is_err() {
+        if window
+            .opener()
+            .open_url(url.as_str(), None::<&str>)
+            .is_err()
+        {
             self.cancel();
             return Err("Could not open the browser. Please try again.".into());
         }
@@ -598,14 +697,16 @@ impl ChatGptState {
                 }
                 // A new registration names its issued client ID on the
                 // callback; a returning sign-in may leave it out.
-                let issued = loopback::single(&query, "client_id").map(str::to_owned).or(client_id);
+                let issued = loopback::single(&query, "client_id")
+                    .map(str::to_owned)
+                    .or(client_id);
                 let (Some(code), Some(issued)) = (loopback::single(&query, "code"), issued) else {
                     completion.respond_page(false, "ChatGPT did not connect.");
                     return Err("ChatGPT sign-in did not complete. Please try again.".into());
                 };
                 match worker.exchange(code, &verifier, &redirect_uri, &issued, &nonce) {
                     Ok(()) => {
-                        completion.respond_page(true, "ChatGPT is connected to zega.");
+                        completion.respond_page(true, "ChatGPT is connected to Tana Studio.");
                         Ok(())
                     }
                     Err(error) => {
@@ -626,7 +727,14 @@ impl ChatGptState {
         Ok(self.view())
     }
 
-    fn exchange(&self, code: &str, verifier: &str, redirect_uri: &str, client_id: &str, nonce: &str) -> Result<()> {
+    fn exchange(
+        &self,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+        client_id: &str,
+        nonce: &str,
+    ) -> Result<()> {
         let response = self
             .client
             .post(TOKEN)
@@ -639,7 +747,9 @@ impl ChatGptState {
                 ("resource", RESOURCE),
             ])
             .send()
-            .map_err(|_| "Could not reach ChatGPT to finish signing in. Check your connection.".to_string())?;
+            .map_err(|_| {
+                "Could not reach ChatGPT to finish signing in. Check your connection.".to_string()
+            })?;
         if !response.status().is_success() {
             return Err("ChatGPT refused the sign-in. Please try again.".into());
         }
@@ -701,7 +811,9 @@ impl ChatGptState {
             if error["error"].as_str().is_some_and(unusable) {
                 self.forget()?;
                 self.notify();
-                return Err("Your ChatGPT sign-in expired. Continue with ChatGPT to reconnect.".into());
+                return Err(
+                    "Your ChatGPT sign-in expired. Continue with ChatGPT to reconnect.".into(),
+                );
             }
             return Err("ChatGPT is unavailable right now. Please try again.".into());
         }
@@ -790,51 +902,31 @@ impl ChatGptState {
         }
     }
 
-    pub fn ask(
-        &self,
-        question: &str,
-        model: &str,
-        instructions: Option<&str>,
-        cache_key: Option<&str>,
-        images: &[String],
-        send: impl FnMut(AskEvent),
-    ) -> Result<()> {
-        let question = question.trim();
-        // Screenshots the model looks at (data:image/png;base64,… only: the
-        // builder captures them itself, nothing is fetched from a URL).
-        if images.len() > MAX_IMAGES || images.iter().any(|i| !i.starts_with("data:image/png;base64,") || i.len() > MAX_IMAGE_BYTES) {
-            return Err("Those screenshots can't be sent.".into());
-        }
-        let limit = if instructions.is_some() { MAX_BUILD_REQUEST } else { MAX_QUESTION };
-        if question.is_empty() || question.len() > limit {
-            return Err(format!("Ask a question of up to {limit} characters."));
-        }
-        // Low reasoning effort: search answers should start in a second or
-        // two, not after a long think. A model that refuses the setting
-        // (`subscription_sharing_unsupported_capability`) is asked again
-        // without it.
+    pub fn ask(&self, request: &AskRequest, send: impl FnMut(AskEvent)) -> Result<()> {
+        let generation = self
+            .stop_generation
+            .load(std::sync::atomic::Ordering::SeqCst);
         let mut body = json!({
-            "model": model,
-            "input": [{ "role": "user", "content": if images.is_empty() {
-                json!(question)
-            } else {
-                let mut parts = vec![json!({ "type": "input_text", "text": question })];
-                parts.extend(images.iter().map(|url| json!({ "type": "input_image", "image_url": url })));
-                json!(parts)
-            } }],
+            "model": request.model,
+            "input": conversation_input(request)?,
             "store": false,
             "stream": true,
             "reasoning": { "effort": "low" },
         });
-        // The builder sends its design rules as instructions; search asks
-        // plain questions and sends none.
-        if let Some(instructions) = instructions.filter(|text| !text.trim().is_empty()) {
+        if let Some(instructions) = request
+            .instructions
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+        {
+            if instructions.len() > 16_000 {
+                return Err("The instructions are too long.".into());
+            }
             body["instructions"] = json!(instructions);
         }
         // Requests that share a key are routed to the same prompt cache, so a
         // repeated opening (the rules, then the same design) is read from
         // cache: faster, and counted as cached input.
-        if let Some(key) = cache_key.filter(|key| !key.is_empty()) {
+        if let Some(key) = request.cache_key.as_deref().filter(|key| !key.is_empty()) {
             body["prompt_cache_key"] = json!(key);
         }
         let started = Instant::now();
@@ -878,11 +970,18 @@ impl ChatGptState {
             send(failure(error["code"].as_str(), error["message"].as_str()));
             return Ok(());
         }
-        let generation = self.stop_generation.load(std::sync::atomic::Ordering::SeqCst);
-        let stoppable = Stoppable { inner: response, generation, current: &self.stop_generation };
+        let stoppable = Stoppable {
+            inner: response,
+            generation,
+            current: &self.stop_generation,
+        };
         let mut finished = false;
         let result = read_stream(std::io::BufReader::new(stoppable), started, |event| {
-            if let AskEvent::Completed { tokens: Some(tokens), .. } = &event {
+            if let AskEvent::Completed {
+                tokens: Some(tokens),
+                ..
+            } = &event
+            {
                 // Counting must never cost the user their answer.
                 let _ = self.record_usage(tokens);
             }
@@ -891,7 +990,12 @@ impl ChatGptState {
             }
             send(event);
         });
-        if !finished && self.stop_generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
+        if !finished
+            && self
+                .stop_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != generation
+        {
             send(failure(Some("stopped"), Some("Stopped.")));
             return Ok(());
         }
@@ -900,7 +1004,8 @@ impl ChatGptState {
 
     /// Stop every answer in progress (the builder's Stop button).
     pub fn stop(&self) {
-        self.stop_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.stop_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn usage_path(&self) -> Result<PathBuf> {
@@ -919,7 +1024,8 @@ impl ChatGptState {
         let _inner = self.inner.lock().unwrap();
         let mut log = self.usage_log();
         log.record(chrono::Local::now().date_naive(), tokens);
-        let text = serde_json::to_string_pretty(&log).map_err(|_| "Could not save usage.".to_string())?;
+        let text =
+            serde_json::to_string_pretty(&log).map_err(|_| "Could not save usage.".to_string())?;
         fs::write(self.usage_path()?, text).map_err(|_| "Could not save usage.".to_string())
     }
 
@@ -934,7 +1040,10 @@ pub fn chatgpt_status(state: State<'_, Arc<ChatGptState>>) -> View {
 }
 
 #[tauri::command]
-pub async fn chatgpt_start(state: State<'_, Arc<ChatGptState>>, window: tauri::Window) -> Result<View> {
+pub async fn chatgpt_start(
+    state: State<'_, Arc<ChatGptState>>,
+    window: tauri::Window,
+) -> Result<View> {
     let state = Arc::clone(&state);
     state.start(window).await
 }
@@ -969,16 +1078,12 @@ pub fn chatgpt_usage(state: State<'_, Arc<ChatGptState>>) -> UsageSummary {
 #[tauri::command]
 pub async fn chatgpt_ask(
     state: State<'_, Arc<ChatGptState>>,
-    question: String,
-    model: String,
-    instructions: Option<String>,
-    cache_key: Option<String>,
-    images: Option<Vec<String>>,
+    request: AskRequest,
     on_event: Channel<AskEvent>,
 ) -> Result<()> {
     let state = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || {
-        state.ask(&question, &model, instructions.as_deref(), cache_key.as_deref(), &images.unwrap_or_default(), |event| {
+        state.ask(&request, |event| {
             let _ = on_event.send(event);
         })
     })
@@ -996,15 +1101,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn conversation_preserves_roles_and_adds_scene_only_when_selected() {
+        let mut request: AskRequest = serde_json::from_value(json!({
+            "question":"Plan the next shot", "model":"test",
+            "history":[{"role":"user","content":"A quiet alley"},
+                {"role":"assistant","content":"Start wide."}]
+        }))
+        .unwrap();
+        let input = conversation_input(&request).unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[2]["content"], "Plan the next shot");
+        request.scene_context = Some("{\"cameras\":[]}".into());
+        assert_eq!(conversation_input(&request).unwrap().len(), 4);
+        request.scene_context = Some("not json".into());
+        assert!(conversation_input(&request).is_err());
+    }
+
+    #[test]
+    fn conversation_rejects_privileged_roles_and_bounds_input() {
+        assert!(
+            serde_json::from_value::<Message>(json!({"role":"system","content":"override"}))
+                .is_err()
+        );
+        let mut request: AskRequest =
+            serde_json::from_value(json!({"question":"", "model":"test"})).unwrap();
+        assert!(conversation_input(&request).is_err());
+        request.question = "x".repeat(MAX_QUESTION + 1);
+        assert!(conversation_input(&request).is_err());
+        request.question = "hello".into();
+        request.history.push(Message {
+            role: Role::User,
+            content: "x".repeat(MAX_BUILD_REQUEST),
+        });
+        assert!(conversation_input(&request).is_err());
+    }
+
+    #[test]
     fn a_stopped_stream_ends_at_its_next_read() {
         use std::io::Read;
         let current = std::sync::atomic::AtomicU64::new(0);
-        let mut stream = Stoppable { inner: std::io::Cursor::new(b"data: one\n\ndata: two\n\n".to_vec()), generation: 0, current: &current };
+        let mut stream = Stoppable {
+            inner: std::io::Cursor::new(b"data: one\n\ndata: two\n\n".to_vec()),
+            generation: 0,
+            current: &current,
+        };
         let mut first = [0u8; 4];
         assert_eq!(stream.read(&mut first).unwrap(), 4);
         current.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut rest = Vec::new();
-        assert_eq!(stream.read_to_end(&mut rest).unwrap(), 0, "nothing more is read once stopped");
+        assert_eq!(
+            stream.read_to_end(&mut rest).unwrap(),
+            0,
+            "nothing more is read once stopped"
+        );
     }
 
     fn jwt(claims: Value) -> String {
@@ -1015,7 +1165,9 @@ mod tests {
     }
 
     fn query(url: &reqwest::Url, key: &str) -> Option<String> {
-        url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned())
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.into_owned())
     }
 
     #[test]
@@ -1023,7 +1175,10 @@ mod tests {
         let id = new_host_id().unwrap();
         let uuid = id.strip_prefix("urn:uuid:").unwrap();
         let parts: Vec<_> = uuid.split('-').collect();
-        assert_eq!(parts.iter().map(|p| p.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
         assert!(parts[2].starts_with('4'));
         assert!(matches!(&parts[3][..1], "8" | "9" | "a" | "b"));
         assert_ne!(id, new_host_id().unwrap());
@@ -1031,17 +1186,41 @@ mod tests {
 
     #[test]
     fn a_first_sign_in_registers_dynamically_and_names_the_app() {
-        let url = authorize_url(None, Some("me@example.com"), "urn:uuid:x", "http://127.0.0.1:49200/auth/callback", "st", "no", "ch").unwrap();
-        assert_eq!(url.origin().ascii_serialization(), "https://auth.openai.com");
+        let url = authorize_url(
+            None,
+            Some("me@example.com"),
+            "urn:uuid:x",
+            "http://127.0.0.1:49200/auth/callback",
+            "st",
+            "no",
+            "ch",
+        )
+        .unwrap();
+        assert_eq!(
+            url.origin().ascii_serialization(),
+            "https://auth.openai.com"
+        );
         assert_eq!(url.path(), "/api/accounts/authorize");
         assert_eq!(query(&url, "client_id").as_deref(), Some(DYNAMIC_CLIENT));
-        assert_eq!(query(&url, "agent_name_hint").as_deref(), Some("zega"));
+        assert_eq!(
+            query(&url, "agent_name_hint").as_deref(),
+            Some("Tana Studio")
+        );
         assert_eq!(query(&url, "login_hint"), None);
-        assert_eq!(query(&url, "ext_agent_host_id").as_deref(), Some("urn:uuid:x"));
-        assert_eq!(query(&url, "redirect_uri").as_deref(), Some("http://127.0.0.1:49200/auth/callback"));
+        assert_eq!(
+            query(&url, "ext_agent_host_id").as_deref(),
+            Some("urn:uuid:x")
+        );
+        assert_eq!(
+            query(&url, "redirect_uri").as_deref(),
+            Some("http://127.0.0.1:49200/auth/callback")
+        );
         assert_eq!(query(&url, "scope").as_deref(), Some(SCOPE));
         assert_eq!(query(&url, "resource").as_deref(), Some(RESOURCE));
-        assert_eq!(query(&url, "code_challenge_method").as_deref(), Some("S256"));
+        assert_eq!(
+            query(&url, "code_challenge_method").as_deref(),
+            Some("S256")
+        );
         assert_eq!(query(&url, "code_challenge").as_deref(), Some("ch"));
         assert_eq!(query(&url, "state").as_deref(), Some("st"));
         assert_eq!(query(&url, "nonce").as_deref(), Some("no"));
@@ -1049,7 +1228,16 @@ mod tests {
 
     #[test]
     fn a_returning_sign_in_reuses_the_issued_client_without_the_name_hint() {
-        let url = authorize_url(Some("app_123"), Some("me@example.com"), "urn:uuid:x", "http://127.0.0.1:49200/auth/callback", "st", "no", "ch").unwrap();
+        let url = authorize_url(
+            Some("app_123"),
+            Some("me@example.com"),
+            "urn:uuid:x",
+            "http://127.0.0.1:49200/auth/callback",
+            "st",
+            "no",
+            "ch",
+        )
+        .unwrap();
         assert_eq!(query(&url, "client_id").as_deref(), Some("app_123"));
         assert_eq!(query(&url, "agent_name_hint"), None);
         assert_eq!(query(&url, "login_hint").as_deref(), Some("me@example.com"));
@@ -1058,22 +1246,44 @@ mod tests {
     #[test]
     fn id_tokens_must_match_this_client_attempt_and_time() {
         let good = json!({"iss": ISSUER, "aud": "app_1", "nonce": "n1", "exp": 2000, "email": "me@example.com"});
-        assert_eq!(check_id_token(&jwt(good.clone()), "app_1", "n1", 1000).unwrap(), Claims { email: Some("me@example.com".into()) });
+        assert_eq!(
+            check_id_token(&jwt(good.clone()), "app_1", "n1", 1000).unwrap(),
+            Claims {
+                email: Some("me@example.com".into())
+            }
+        );
         let mut listed = good.clone();
         listed["aud"] = json!(["other", "app_1"]);
         assert!(check_id_token(&jwt(listed), "app_1", "n1", 1000).is_ok());
-        assert!(check_id_token(&jwt(good.clone()), "app_2", "n1", 1000).is_err(), "another client's token");
-        assert!(check_id_token(&jwt(good.clone()), "app_1", "n2", 1000).is_err(), "another attempt's nonce");
-        assert!(check_id_token(&jwt(good.clone()), "app_1", "n1", 2000).is_err(), "expired");
+        assert!(
+            check_id_token(&jwt(good.clone()), "app_2", "n1", 1000).is_err(),
+            "another client's token"
+        );
+        assert!(
+            check_id_token(&jwt(good.clone()), "app_1", "n2", 1000).is_err(),
+            "another attempt's nonce"
+        );
+        assert!(
+            check_id_token(&jwt(good.clone()), "app_1", "n1", 2000).is_err(),
+            "expired"
+        );
         let mut issuer = good;
         issuer["iss"] = json!("https://evil.example");
-        assert!(check_id_token(&jwt(issuer), "app_1", "n1", 1000).is_err(), "another issuer");
+        assert!(
+            check_id_token(&jwt(issuer), "app_1", "n1", 1000).is_err(),
+            "another issuer"
+        );
         assert!(check_id_token("not-a-jwt", "app_1", "n1", 1000).is_err());
     }
 
     fn stream(text: &str) -> Vec<AskEvent> {
         let mut events = Vec::new();
-        read_stream(std::io::Cursor::new(text.to_owned()), Instant::now(), |event| events.push(event)).unwrap();
+        read_stream(
+            std::io::Cursor::new(text.to_owned()),
+            Instant::now(),
+            |event| events.push(event),
+        )
+        .unwrap();
         events
     }
 
@@ -1086,41 +1296,96 @@ mod tests {
             "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":120,\"input_tokens_details\":{\"cached_tokens\":100},\"output_tokens\":30,\"output_tokens_details\":{\"reasoning_tokens\":12},\"total_tokens\":150}}}\n\n",
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"after\"}\n\n",
         ));
-        assert_eq!(events[..2], [AskEvent::Delta { text: "Hel".into() }, AskEvent::Delta { text: "lo".into() }]);
-        let [_, _, AskEvent::Completed { tokens, first_word_ms, .. }] = &events[..] else {
+        assert_eq!(
+            events[..2],
+            [
+                AskEvent::Delta { text: "Hel".into() },
+                AskEvent::Delta { text: "lo".into() }
+            ]
+        );
+        let [_, _, AskEvent::Completed {
+            tokens,
+            first_word_ms,
+            ..
+        }] = &events[..]
+        else {
             panic!("expected two deltas then completed, got {events:?}");
         };
-        assert_eq!(*tokens, Some(Tokens { input: 120, cached_input: 100, output: 30, reasoning: 12 }));
+        assert_eq!(
+            *tokens,
+            Some(Tokens {
+                input: 120,
+                cached_input: 100,
+                output: 30,
+                reasoning: 12
+            })
+        );
         assert!(first_word_ms.is_some());
     }
 
     #[test]
     fn usage_totals_roll_up_by_day_and_forget_old_days() {
         let day = |d: &str| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap();
-        let tokens = Tokens { input: 100, output: 20, ..Tokens::default() };
+        let tokens = Tokens {
+            input: 100,
+            output: 20,
+            ..Tokens::default()
+        };
         let mut log = UsageLog::default();
         log.record(day("2026-07-01"), &tokens);
         log.record(day("2026-09-24"), &tokens);
         log.record(day("2026-09-29"), &tokens);
         log.record(day("2026-09-29"), &tokens);
         let summary = log.summary(day("2026-09-29"));
-        assert_eq!(summary.today, Totals { answers: 2, input: 200, output: 40 });
-        assert_eq!(summary.last_7_days, Totals { answers: 3, input: 300, output: 60 });
-        assert_eq!(summary.all_time, Totals { answers: 4, input: 400, output: 80 });
-        assert!(!log.days.contains_key("2026-07-01"), "days past the window fold into all-time only");
+        assert_eq!(
+            summary.today,
+            Totals {
+                answers: 2,
+                input: 200,
+                output: 40
+            }
+        );
+        assert_eq!(
+            summary.last_7_days,
+            Totals {
+                answers: 3,
+                input: 300,
+                output: 60
+            }
+        );
+        assert_eq!(
+            summary.all_time,
+            Totals {
+                answers: 4,
+                input: 400,
+                output: 80
+            }
+        );
+        assert!(
+            !log.days.contains_key("2026-07-01"),
+            "days past the window fold into all-time only"
+        );
     }
 
     #[test]
     fn a_usage_limit_offers_manage_usage() {
         let events = stream("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\",\"message\":\"limit\"}}}\n\n");
-        assert!(matches!(&events[..], [AskEvent::Failed { usage_limited: true, .. }]));
+        assert!(matches!(
+            &events[..],
+            [AskEvent::Failed {
+                usage_limited: true,
+                ..
+            }]
+        ));
     }
 
     #[test]
     fn a_stream_that_stops_early_is_not_an_answer() {
         let events = stream("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\n");
         assert_eq!(events.len(), 2);
-        assert!(matches!(&events[1], AskEvent::Failed { code: Some(code), .. } if code == "incomplete"));
+        assert!(
+            matches!(&events[1], AskEvent::Failed { code: Some(code), .. } if code == "incomplete")
+        );
     }
 
     #[test]

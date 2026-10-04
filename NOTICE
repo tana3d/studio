@@ -1,12 +1,13 @@
-zega desktop
+Studio by tana
 Copyright 2026 Sami Fouad
 
-This product includes software and data developed by third parties:
+Derived from the Apache-2.0 desktop shell at https://github.com/zegadb/studio.
+The Worldbuilder editor at editor/ is MIT licensed.
 
-- GeoNames (src-tauri/computer-index/data/cities.tsv): a reduced derivative of
-  cities15000 from https://www.geonames.org, licensed under Creative Commons
-  Attribution 4.0 (CC BY 4.0). See src-tauri/computer-index/data/ATTRIBUTION.md.
-- Figtree (https://github.com/erikdkennedy/figtree) and IBM Plex Mono
-  (https://github.com/IBM/plex), licensed under the SIL Open Font License 1.1.
-- MapLibre GL JS (https://github.com/maplibre/maplibre-gl-js), licensed under
-  the BSD 3-Clause License.
+Third-party software and assets:
+- Figtree (https://github.com/erikdkennedy/figtree), SIL Open Font License 1.1.
+- Three.js (https://github.com/mrdoob/three.js), MIT.
+- fflate (https://github.com/101arrowz/fflate), MIT.
+- Cesium Man, copyright 2017 Cesium, CC BY 4.0; logo trademark notice applies.
+- RobotExpressive by Tomas Laulhe (Quaternius), CC0 1.0, converted by Don McCurdy.
+See editor/assets/ATTRIBUTION.md for sources and the model trademark notice.

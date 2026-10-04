@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio · Scene studio</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./studio.css">
+</head>
+<body>
+<div id="ui">
+  <div id="workspace">
+  <div id="viewport" aria-label="3D scene"></div>
+  <div id="viewbar"><div id="cams"></div>
+  <div id="controlbar" class="panel" role="group" aria-label="Control target">
+    <span class="eyebrow">CONTROL</span>
+    <button id="mode-camera" aria-pressed="true">Camera</button>
+    <button id="mode-character" aria-pressed="false">Character</button>
+    <select id="control-character" aria-label="Character to control"></select>
+  </div>
+  </div>
+  <aside id="sidebar" aria-label="Scene tools">
+    <div id="sidebar-tabs" role="tablist" aria-label="Scene tools">
+      <button id="library-tab" role="tab" aria-selected="true" aria-controls="library">Library</button>
+      <button id="action-tab" role="tab" aria-selected="false" aria-controls="cast-panel" tabindex="-1">Direct the action</button>
+    </div>
+  <section id="library" role="tabpanel" aria-labelledby="library-tab">
+    <div class="eyebrow">BUILD YOUR SCENE</div><h1>Asset library</h1>
+    <div class="tabs"><button data-tab="props" class="active">Objects</button><button data-tab="characters">Characters</button></div>
+    <input id="asset-search" type="search" placeholder="Search assets…" aria-label="Search assets">
+    <div id="asset-list"></div>
+    <button id="import-model" class="wide">＋ Import .glb</button><input id="model-file" type="file" accept=".glb" hidden>
+    <p class="muted">Choose an object, then click the ground to place it. Import a GLB in the selected category.</p>
+    <a class="credits" href="./assets/ATTRIBUTION.md" target="_blank">Model credits ↗</a>
+  </section>
+  <section id="cast-panel" role="tabpanel" aria-labelledby="action-tab" hidden><h2>Cast & control</h2><label for="actor-select">Selected character</label><select id="actor-select"></select><button id="control-actor" class="wide">Control character</button><button id="free-camera" class="wide subtle">Free camera</button><label for="frame-format">Video frame</label><select id="frame-format"><option value="landscape">Landscape · 16:9</option><option value="portrait">Vertical · 9:16</option></select><label for="gesture-select">Animation</label><select id="gesture-select"></select><p id="control-hint" class="muted">Free camera · WASD to move<br>Right-drag to look around</p><button id="export-all" class="wide subtle">Download scene ↗</button><details id="scenejson"><summary>Scene data</summary><pre></pre></details></section></aside>
+  <div id="viewport-label"><span class="live-dot"></span><span id="mode-label">LIVE SCENE</span></div>
+  <div id="hint">WASD move · right-drag aim · Q/E rotate · F free view · ⌘/Ctrl Z undo · right-click camera to delete</div>
+  <div id="toast" role="status"></div>
+  </div>
+  <section id="timeline" class="panel" aria-label="Layered performance timeline">
+    <div class="timeline-top"><div><span class="eyebrow">SCENE TIMELINE</span><span id="performance-status">Record performances in layers.</span></div><div class="transport"><div id="history-controls"><button id="undo" aria-label="Undo" title="Undo" disabled>↶</button><button id="redo" aria-label="Redo" title="Redo" disabled>↷</button></div><button id="live-mode">Back to live</button><button id="record-performance" class="primary">● Record movement</button><button id="record-camera-angle">Record Camera Angle</button><label class="angle-length">Length <input id="insert-angle-length" aria-label="New camera angle length in seconds" type="number" min="0.1" max="300" step="0.1" value="3">s</label><button id="rec">Export video ↗</button><span id="rectime"></span></div></div>
+    <div class="timeline-main"><button id="rewind" title="Rewind to start" aria-label="Rewind to start">|◀</button><button id="play-performance" aria-label="Play performance">▶</button><output id="timecode">00:00.00</output><div class="scrub-wrap"><input id="scrubber" aria-label="Scene time" type="range" min="0" max="10" step="0.001" value="0"></div><span id="duration-label">0.0s</span><button id="split-clip" aria-label="Split at playhead" title="Split selected clip at playhead (⌘/Ctrl B)" disabled>Split</button><label class="zoom-label">Zoom <input id="timeline-zoom" aria-label="Timeline zoom" type="range" min="30" max="180" value="80"></label></div>
+    <div id="tracks-scroll"><div id="tracks-stage"><div id="tracks-ruler"><div class="track-corner">SCENE TRACKS</div><div id="time-ruler" aria-label="Timeline ruler"></div></div><div id="camera-track" class="camera-track"><div class="track-label"><button id="preview-edit" class="track-name" title="View the camera edit">Camera edit</button><button id="add-shot" title="Record Camera Angle at playhead" aria-label="Add camera at playhead">＋</button></div><div id="camera-lane" class="track-lane"></div></div><div id="track-rows"></div><div id="timeline-playhead"><span></span></div></div></div>
+    <div id="camera-inspector" hidden><label>Camera <select id="shot-camera" aria-label="Shot camera"></select></label><label>Start <input id="shot-start" type="number" min="0" max="299.9" step="0.1"></label><label>Length <input id="shot-length" aria-label="Camera angle length" type="number" min="0.1" max="300" step="0.1"></label><label>Transition <select id="shot-transition"><option>None</option><option>Fade</option><option>Wipe</option></select></label><label>Duration <input id="shot-duration" type="number" min="0.05" max="10" step="0.1"></label><button id="shot-adjust">Adjust angle</button><button id="shot-view">Use current view</button><button id="shot-delete" aria-label="Delete camera shot">Delete</button><label>Scene end <input id="scene-end" type="number" min="0.1" max="300" step="0.1"></label></div><div id="clip-inspector"><select id="performance-select" aria-label="Select performance layer"><option>No layers yet</option></select><label>Name <input id="clip-name" aria-label="Layer name" type="text" maxlength="80"></label><label>Start <input id="clip-offset" aria-label="Clip start time" type="number" min="0" max="300" step="0.1"></label><label>Trim in <input id="clip-in" aria-label="Clip trim in" type="number" min="0" step="0.1"></label><label>Trim out <input id="clip-out" aria-label="Clip trim out" type="number" min="0" step="0.1"></label><span class="muted">seconds</span></div>
+    <div class="timeline-footer"><span id="track-label">No layers yet</span><span>Camera track above · performances below · drag edges to adjust timing</span></div>
+  </section>
+  <dialog id="export-dialog" aria-labelledby="export-title"><h2 id="export-title">Export video</h2><label for="export-format">File format</label><select id="export-format"><option value="mp4">MP4</option><option value="webm">WebM</option></select><p id="export-format-note" class="muted" hidden>MP4 is unavailable in this browser. Try a current Chrome or Edge browser.</p><label for="export-quality">Quality</label><select id="export-quality"><option value="low">Low · 720p</option><option value="standard" selected>Standard · 1080p</option><option value="high">High · 1440p</option></select><label for="export-aspect">Video frame</label><select id="export-aspect"><option value="landscape">Landscape · 16:9</option><option value="portrait">Vertical · 9:16</option></select><p id="export-size" class="muted"></p><div class="dialog-actions"><button id="cancel-export-settings">Cancel</button><button id="start-export" class="primary">Export video</button></div></dialog>
+  <dialog id="shot-insert-dialog" aria-labelledby="shot-insert-title"><h2 id="shot-insert-title">Split camera angle?</h2><p id="shot-insert-description"></p><p class="muted">Later camera angles move to the right. Character performances keep their timing.</p><div class="dialog-actions"><button id="cancel-shot-insert">Cancel</button><button id="confirm-shot-insert" class="primary">Split & insert</button></div></dialog>
+  <div id="preview-window" role="dialog" aria-label="Exported video preview" hidden><div class="preview-header"><span>Scene video</span><a id="download-video" download>Download video ↓</a><button id="close-playback" aria-label="Close video preview" title="Close preview (Esc)">×</button></div><video id="playback" controls></video></div>
+  <div id="ctxmenu"><div class="label">ADD HERE</div><div class="item" data-act="camera">Camera</div><div class="item" data-act="streetlamp">Streetlamp</div><div class="item" data-act="neonSign">Neon sign</div><div class="item" data-act="dumpster">Dumpster</div><div class="item" data-act="crate">Crate</div><div class="item" data-act="puddle">Puddle</div></div>
+  <div id="camera-menu" class="panel" hidden><div class="eyebrow">CAMERA</div><button id="camera-delete">Delete camera</button></div>
+</div>
+
+<script type="module" src="./studio.js"></script>
+</body>
+</html>

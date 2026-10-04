@@ -1,48 +1,54 @@
-# zega desktop
+# Studio by tana
 
-The zega app for your computer: **your computer as a graph**. Files, photos
-and settings, searched from a floating search box (⌥Space on macOS, Ctrl+Alt+Space on
-Windows, Super+Z on Linux, all configurable) or the menu bar, with every other zega graph one click away on the
-rail. Built with [Tauri](https://tauri.app) on macOS, Windows and Linux.
+Build worlds, direct character performances, arrange camera angles, and export your story.
 
-- **Local first.** The computer graph is built and stored on this machine and
-  never leaves it. Indexing runs on the embedded
-  [zega](https://github.com/zegadb/zega) engine.
-- **Download:** [zega.earth/download](https://zega.earth/download). On Linux,
-  see [zega.earth/download/linux](https://zega.earth/download/linux) for apt,
-  pacman and AppImage.
+Studio combines a local Three.js scene editor with a ChatGPT conversation in a Tauri desktop app. Chat occupies one third of the window; the scene editor occupies two thirds. The editor is bundled into the app and works without a separate server.
 
-## Build from source
+## Development
 
-You need Node 24 or newer, Rust 1.96 (see `rust-toolchain.toml`) and
-[Tauri's system prerequisites](https://tauri.app/start/prerequisites/) for
-your platform.
+Requires Node.js 24+, Rust 1.96, and the platform's Tauri build prerequisites.
 
 ```sh
-npm ci
-npm run tauri dev        # run the app with hot reload
-npm run tauri build      # build a local bundle
+npm install
+CARGO_TARGET_DIR="$PWD/.target" CARGO_BUILD_JOBS=2 npm run tauri -- dev
 ```
 
-`npm run build:desktop` creates the static export the app loads.
-
-## Test
+Desktop development uses port **1420**. The standalone Worldbuilder server on **8648** is a separate app and is left intact. Do not move either server to another port or stop unrelated servers.
 
 ```sh
-npm run check                                              # TypeScript
-npm run test:desktop                                       # the exported shell
-cargo test --locked --manifest-path src-tauri/Cargo.toml   # native side and the index
+npm run check
+npm run build
+npm test
+npm run test:ui
+CARGO_TARGET_DIR="$PWD/.target" CARGO_BUILD_JOBS=2 cargo test --locked --manifest-path src-tauri/Cargo.toml
+CARGO_TARGET_DIR="$PWD/.target" CARGO_BUILD_JOBS=2 cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
-More in `docs/`: [the index](docs/index.md), [shortcuts](docs/shortcuts/README.md),
-[appearance](docs/appearance.md) and [developing on Windows](docs/windows-development.md).
+Build distributables with `npm run tauri -- build`. Artifacts land in `.target/release/bundle` when using the target directory above. macOS builds are not yet signed or notarized for distribution. Automatic updates are disabled until Tana has its own release service.
 
-## Contributing and security
+To smoke-test the actual OS webview, create `.tmp` and launch dev mode with `STUDIO_SMOKE_REPORT="$PWD/.tmp/native-smoke.json"`. This opt-in debug test loads the scene and exports/decodes a short video without signing in or calling a model. Close the test app afterward and launch normal dev mode for a fresh scene.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities
-privately, as described in [SECURITY.md](SECURITY.md).
+## What is included
 
-## License
+- Asset library, GLB imports, animated performers, character and camera controls.
+- Layered performance timeline, camera shots, splits, undo/redo, fade and wipe transitions.
+- Landscape 16:9 and vertical 9:16 video framing, MP4/WebM and quality selection where supported by the host's webview.
+- Native save dialogs for footage and scene ZIP exports. Unzip scene exports to get the footage folder.
+- Sign in with ChatGPT, dynamically supplied model choices, streaming conversation, Stop and New chat.
+- Optional scene context with camera and performance descriptions; never sends mesh buffers, animation frames, or local files automatically.
 
-[Apache-2.0](LICENSE). Bundled data and fonts keep their own licences: see
-[NOTICE](NOTICE).
+The inherited desktop search UI, menu-bar/tray app, global shortcuts, file crawler/index, Deka runtime, app generation, terminal, and Zega account/update services have been removed. The scene editor retains its movement and editing controls. See [editor controls and details](docs/editor.md).
+
+## Current boundaries
+
+ChatGPT helps plan scenes and shots. It cannot manipulate the scene or generate/rig/animate assets yet. Its model list depends on the signed-in account and the provider's supported models. Credentials live in Studio's own OS credential vault; access tokens stay in the native process and are never exposed to the editor.
+
+Conversations and scenes remain in memory for this prototype. Download a scene ZIP before closing when you want to preserve its assets and recorded footage; project import is not implemented yet. Video exports have no audio. Export codec support varies by the operating system's webview, and unsupported choices are disabled.
+
+The browser preview can use the editor but cannot sign in with ChatGPT. Use Tauri dev mode for the complete desktop app.
+
+## Origin and license
+
+The desktop shell and ChatGPT provider are derived from [zegadb/studio](https://github.com/zegadb/studio), prototype commit `1e9e1b3`. The editor comes from [samifouad/worldbuilder](https://github.com/samifouad/worldbuilder), commit `c1ff2d8`. The source repositories remain intact.
+
+Apache-2.0 for the desktop shell; the imported editor is MIT (see [editor/LICENSE](editor/LICENSE)). Third-party models and fonts retain their licenses. See [NOTICE](NOTICE) and [model attribution](editor/assets/ATTRIBUTION.md).

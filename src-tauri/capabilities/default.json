@@ -1,11 +1,9 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "default capability for the desktop shell",
+  "description": "Studio window controls and external ChatGPT sign-in",
   "windows": [
-    "main",
-    "launcher",
-    "shortcut-setup"
+    "main"
   ],
   "permissions": [
     "core:default",

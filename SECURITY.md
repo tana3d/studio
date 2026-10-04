@@ -1,11 +1,7 @@
 # Security Policy
 
-## Supported Versions
+Security fixes are provided for the latest version of Tana Studio.
 
-Security fixes are provided for the latest released version of zega desktop.
+Please use [GitHub private vulnerability reporting](https://github.com/tana3d/studio/security/advisories/new) for suspected vulnerabilities. Do not post credentials or personal scene data in a public issue.
 
-## Reporting a Vulnerability
-
-Please report vulnerabilities through [GitHub private vulnerability reporting](https://github.com/zegadb/desktop/security/advisories/new). Do not open a public issue for a suspected vulnerability.
-
-We will acknowledge the report and coordinate a fix before public disclosure.
+Studio does not crawl or index the computer. Native file writes require a save dialog. ChatGPT credentials stay in the OS vault/native process. Scene context is shared only when selected in the composer.

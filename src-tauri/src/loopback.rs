@@ -4,7 +4,7 @@
 //! open the system browser to the identity service, then accept exactly one
 //! GET request on the callback path carrying the attempt's `state`. No
 //! credentials cross the webview boundary; the verifier never leaves this
-//! process. zega's own sign-in uses `/callback` (`Flow::callback`); Sign in
+//! process. Sign in
 //! with ChatGPT uses `/auth/callback` (`Flow::receive`).
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -19,8 +19,6 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
-
-use crate::account::IDENTITY_ORIGIN;
 
 const TIMEOUT: Duration = Duration::from_secs(180);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -95,32 +93,6 @@ impl Flow {
         &self.state
     }
 
-    pub fn browser_uri(&self) -> String {
-        // Confirmed against zegadb/id app/auth/desktop/route.ts: `port`,
-        // `state` and `challenge` are the only parameters it accepts, and
-        // both random values are base64url, so no further encoding is needed.
-        format!(
-            "{IDENTITY_ORIGIN}/auth/desktop?port={}&state={}&challenge={}",
-            self.port,
-            self.state.as_str(),
-            challenge(&self.verifier)
-        )
-    }
-
-    /// Accept zega identity's callback: `/callback?code=<64 hex>&state=…`.
-    /// Long-running; intended to run inside `spawn_blocking` so the Tauri
-    /// command returns immediately.
-    pub fn callback(self) -> Result<(Zeroizing<String>, Zeroizing<String>, Completion)> {
-        let (query, verifier, completion) = self.receive("/callback")?;
-        match zega_code(&query) {
-            Ok(code) => Ok((code, verifier, completion)),
-            Err(error) => {
-                completion.respond(false);
-                Err(error)
-            }
-        }
-    }
-
     /// Accept one GET on `path` whose `state` matches this attempt, and hand
     /// back its other query parameters for the caller to validate.
     pub fn receive(self, path: &str) -> Result<(Query, Zeroizing<String>, Completion)> {
@@ -193,36 +165,11 @@ pub fn single<'a>(query: &'a Query, key: &str) -> Option<&'a str> {
     values.next().is_none().then_some(value.1.as_str())
 }
 
-fn zega_code(query: &Query) -> Result<Zeroizing<String>> {
-    let invalid = || "Invalid browser callback. Please start sign-in again.".to_string();
-    if query.len() != 1 {
-        return Err(invalid());
-    }
-    let code = single(query, "code").ok_or_else(invalid)?;
-    // zega id (lib/auth-code.ts issueCode) returns a 64-char hex code, same
-    // as cqx id; keep that contract.
-    if code.len() != 64 || !code.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
-        return Err(invalid());
-    }
-    Ok(Zeroizing::new(code.to_string()))
-}
-
 /// A valid callback is not yet a successful exchange. The caller writes a
 /// success response only once the token has been stored in the OS vault.
 pub struct Completion(TcpStream);
 
 impl Completion {
-    /// zega identity's pages: the tab lands on account.zega.earth.
-    pub fn respond(self, success: bool) {
-        let location = if success {
-            format!("Location: {IDENTITY_ORIGIN}/auth/desktop/done\r\n")
-        } else {
-            format!("Location: {IDENTITY_ORIGIN}/auth/desktop/failed\r\n")
-        };
-        let heading = if success { "You're signed in to zega." } else { "Sign-in could not be completed." };
-        let _ = self.write(success, heading, &location);
-    }
-
     /// A self-contained page with no redirect, for other providers.
     pub fn respond_page(self, success: bool, heading: &str) {
         let _ = self.write(success, heading, "");
@@ -238,15 +185,13 @@ impl Completion {
             )
         };
         let body = format!(
-            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>zega sign-in</title><style>body{{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;background:#070B10;color:#F5F7F6}}main{{max-width:28rem;padding:2rem}}</style></head><body><main><h1>{heading}</h1><p>{guidance}</p></main></body></html>"
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Studio sign-in</title><style>body{{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;background:#070B10;color:#F5F7F6}}main{{max-width:28rem;padding:2rem}}</style></head><body><main><h1>{heading}</h1><p>{guidance}</p></main></body></html>"
         );
         let response = format!(
             "HTTP/1.1 {status}\r\n{location}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
-        self.0
-            .set_write_timeout(Some(Duration::from_secs(1)))
-            .ok();
+        self.0.set_write_timeout(Some(Duration::from_secs(1))).ok();
         self.0.write_all(response.as_bytes())
     }
 }
@@ -285,7 +230,8 @@ fn validate(bytes: &[u8], peer: SocketAddr, port: u16, path: &str, state: &str) 
         return Err(invalid());
     }
 
-    let url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}{}", parts[1])).map_err(|_| invalid())?;
+    let url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}{}", parts[1]))
+        .map_err(|_| invalid())?;
     if url.path() != path {
         return Err(invalid());
     }
@@ -305,7 +251,6 @@ mod tests {
     use super::*;
 
     const STATE: &str = "s7ate";
-    const CODE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn request(target: &str, port: u16) -> Vec<u8> {
         format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").into_bytes()
@@ -316,25 +261,11 @@ mod tests {
     }
 
     #[test]
-    fn zega_callback_yields_its_code() {
-        let bytes = request(&format!("/callback?code={CODE}&state={STATE}"), 49200);
-        let query = validate(&bytes, peer(), 49200, "/callback", STATE).unwrap();
-        assert_eq!(zega_code(&query).unwrap().as_str(), CODE);
-    }
-
-    #[test]
-    fn zega_callback_rejects_extra_parameters_and_bad_codes() {
-        let extra = request(&format!("/callback?code={CODE}&state={STATE}&x=1"), 49200);
-        let query = validate(&extra, peer(), 49200, "/callback", STATE).unwrap();
-        assert!(zega_code(&query).is_err());
-        let short = request(&format!("/callback?code=abc&state={STATE}"), 49200);
-        let query = validate(&short, peer(), 49200, "/callback", STATE).unwrap();
-        assert!(zega_code(&query).is_err());
-    }
-
-    #[test]
     fn other_paths_return_their_parameters_without_state() {
-        let bytes = request(&format!("/auth/callback?code=abc&scope=openid+email&state={STATE}&client_id=app_1"), 49200);
+        let bytes = request(
+            &format!("/auth/callback?code=abc&scope=openid+email&state={STATE}&client_id=app_1"),
+            49200,
+        );
         let query = validate(&bytes, peer(), 49200, "/auth/callback", STATE).unwrap();
         assert_eq!(single(&query, "code"), Some("abc"));
         assert_eq!(single(&query, "scope"), Some("openid email"));
@@ -346,7 +277,10 @@ mod tests {
     fn a_forged_or_missing_state_is_refused() {
         let forged = request("/auth/callback?code=abc&state=other", 49200);
         assert!(validate(&forged, peer(), 49200, "/auth/callback", STATE).is_err());
-        let doubled = request(&format!("/auth/callback?code=abc&state={STATE}&state={STATE}"), 49200);
+        let doubled = request(
+            &format!("/auth/callback?code=abc&state={STATE}&state={STATE}"),
+            49200,
+        );
         assert!(validate(&doubled, peer(), 49200, "/auth/callback", STATE).is_err());
         let missing = request("/auth/callback?code=abc", 49200);
         assert!(validate(&missing, peer(), 49200, "/auth/callback", STATE).is_err());

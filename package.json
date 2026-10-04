@@ -1,7 +1,8 @@
 {
-  "name": "zega-desktop",
+  "name": "tana-studio",
   "version": "0.1.0",
   "private": true,
+  "description": "Tana Studio desktop scene and video editor",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -9,30 +10,23 @@
   },
   "scripts": {
     "dev": "next dev --port 1420",
-    "prebuild": "node scripts/copy-maplibre-worker.mjs",
+    "predev": "node scripts/build-editor.mjs",
+    "prebuild": "node scripts/build-editor.mjs",
     "build": "next build --webpack",
     "build:desktop": "npm run build",
     "check": "tsc --noEmit",
-    "test:desktop": "node --test tests/desktop-shell.test.mjs",
-    "test:desktop:console": "node tests/desktop-console.mjs",
-    "tauri": "tauri",
-    "test:desktop:shortcut": "node tests/macos-shortcut.mjs .target/release/bundle/macos/zega.app/Contents/MacOS/zega-desktop",
-    "test:desktop:setup": "node tests/shortcut-setup.mjs",
-    "test:desktop:theme": "node tests/native-theme.mjs",
-    "test:desktop:index": "node tests/index-search.mjs",
-    "test:desktop:windows": "node --test tests/windows-launcher.mjs"
+    "test": "node --test editor/*.test.mjs tests/*.test.mjs",
+    "test:ui": "node tests/studio-ui.mjs",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.3.0",
-    "@fontsource/ibm-plex-mono": "^5.3.0",
     "@tauri-apps/api": "2.12.0",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "html2canvas": "^1.4.1",
-    "maplibre-gl": "6.11.1",
     "next": "16.3.6",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "three": "^0.186.1",
+    "fflate": "^0.8.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
@@ -40,6 +34,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "playwright": "1.63.0",
-    "typescript": "^5.9"
+    "typescript": "^5.9",
+    "esbuild": "^0.25.0"
   }
 }

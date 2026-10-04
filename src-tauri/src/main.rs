@@ -1,5 +1,3 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 fn main() {
-    zega_desktop_lib::run();
+    tana_studio_lib::run()
 }
