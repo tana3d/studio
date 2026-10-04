@@ -1100,7 +1100,7 @@ function useSceneAsset(asset,author='you'){
   for(const piece of set.pieces){
     FOOTPRINTS[piece.id]=[Math.max(piece.size.x,.001),Math.max(piece.size.z,.001)];PROP_HEIGHTS[piece.id]=piece.walkable?0:Math.max(piece.size.y,.001);PROP_DEFAULTS[piece.id]={};
     if(!propAssets.some(a=>a.id===piece.id))propAssets.push({id:piece.id,name:piece.name,icon:'▦',detail:`Set piece · ${asset.name}`});
-    PROP_BUILDERS[piece.id]=(parent,spec)=>{const model=piece.model.clone(false);model.material=Array.isArray(piece.model.material)?piece.model.material.map(m=>m.clone()):piece.model.material.clone();model.position.add(new THREE.Vector3(...spec.position));parent.add(model);if(!piece.walkable)collider(spec.position[0],spec.position[2],piece.size.x,piece.size.z);};
+    PROP_BUILDERS[piece.id]=(parent,spec)=>{const model=piece.model.clone(true);model.traverse(o=>{if(o.isMesh)o.material=Array.isArray(o.material)?o.material.map(m=>m.clone()):o.material.clone();});model.position.add(new THREE.Vector3(...spec.position));parent.add(model);if(!piece.walkable)collider(spec.position[0],spec.position[2],piece.size.x,piece.size.z);};
   }
   history.run('Use scene '+asset.name,()=>{
     for(const rec of [...props])removeProp(rec);

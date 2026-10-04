@@ -13,3 +13,10 @@ test('scene pieces preserve metre scale and nested transforms and can move indep
  assert.notEqual(pieces[0].model.material,pieces[1].model.material);assert.ok(bounds[1][0]>=10);
  pieces[0].model.position.x+=2;assert.notEqual(pieces[0].model.position.x,pieces[1].model.position.x);
 });
+test('a named multi-mesh tree remains one editable piece',()=>{
+ const scene=new THREE.Group(),set=new THREE.Group(),tree=new THREE.Group();tree.name='Pine_tree_1';scene.add(set);set.add(tree);
+ const trunk=new THREE.Mesh(new THREE.BoxGeometry(.3,2,.3),new THREE.MeshStandardMaterial());trunk.position.y=1;tree.add(trunk);
+ const crown=new THREE.Mesh(new THREE.BoxGeometry(2,2,2),trunk.material);crown.position.y=2.8;tree.add(crown);
+ const floor=new THREE.Mesh(new THREE.BoxGeometry(10,.1,10),trunk.material);floor.position.y=-.05;set.add(floor);
+ const result=editableScene({scene},'forest');assert.equal(result.pieces.length,2);assert.equal(result.pieces[0].name,'Pine tree 1');assert.equal(result.pieces[0].model.children.length,2);assert.ok(result.pieces[0].size.y>3.7);
+});
