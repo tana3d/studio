@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { editableScene } from './scenes.js';
+import { modelScale, scaleModel } from './model-size.js';
 import { characterAssets, createActor, animateActor, poseActor, importModel, normalizedModel, blendLayers } from './characters.js';
 import { CameraTimeline } from './camera-timeline.mjs';
 import { CameraTransitions } from './camera-transitions.js';
@@ -216,6 +217,7 @@ function addProp(spec) {
   const pivot = new THREE.Vector3(...spec.position);
   group.children.forEach(c => c.position.sub(pivot));
   group.position.copy(pivot);
+  group.scale.setScalar(spec.scale ?? 1);
   const id = propSeq++;
   group.traverse(o => o.userData.propId = id);
   scene.add(group);
@@ -243,7 +245,7 @@ function removeProp(rec) {
 }
 // rotation widens the axis-aligned footprint (conservative box)
 function rotatedFootprint(rec) {
-  const [w, d] = FOOTPRINTS[rec.spec.type] ?? [0, 0];
+  const [w, d] = (FOOTPRINTS[rec.spec.type] ?? [0, 0]).map(v=>v*(rec.spec.scale??1));
   const c = Math.abs(Math.cos(rec.rotY)), s = Math.abs(Math.sin(rec.rotY));
   return [w * c + d * s, w * s + d * c];
 }
@@ -254,6 +256,7 @@ function setCollidersAt(rec) {
     c.minX = x - w / 2; c.maxX = x + w / 2;
     c.minZ = z - d / 2; c.maxZ = z + d / 2;
     c.y = rec.elev;
+    c.h = (PROP_HEIGHTS[rec.spec.type] ?? .7)*(rec.spec.scale??1);
   }
 }
 function updateSpec(rec) {
@@ -360,6 +363,7 @@ const camera = new THREE.PerspectiveCamera(62, frameAspect(), 0.1, 200);
 let look = null;  // {x, y} while left-dragging empty space
 let drag = null;  // {kind:'prop'|'cam', rec, pos:[x,z], start:[x,z], valid, placing, lastMouse}
 let selected = null;
+let selectedModelActor = null;
 
 // ---------- input ----------
 const keys = {};
@@ -469,15 +473,16 @@ function updateCamera() {
     const followed = actors[controlled] ?? actors[selectedActor];
     if (!followed) return;
     const p = followed.group.position;
-    camera.position.set(p.x + Math.sin(player.yaw) * 3.4, p.y + 2.4 + player.pitch * 1.5, p.z + Math.cos(player.yaw) * 3.4);
-    camera.lookAt(p.x, p.y + 1.25, p.z);
+    const scale=followed.group.scale.x;
+    camera.position.set(p.x + Math.sin(player.yaw) * 3.4*scale, p.y + (2.4 + player.pitch * 1.5)*scale, p.z + Math.cos(player.yaw) * 3.4*scale);
+    camera.lookAt(p.x, p.y + 1.25*scale, p.z);
   } else if (spec.type === 'static') {
     camera.position.set(...spec.position); camera.lookAt(tmpV.set(...spec.lookAt));
   } else if (spec.type === 'track') {
     const a = actors[selectedActor] ?? actors[spec.target]; if (!a) return;
     const p = a.group.position;
     camera.position.set(p.x + spec.offset[0], p.y + spec.offset[1], p.z + spec.offset[2]);
-    camera.lookAt(p.x, p.y + 1.5, p.z);
+    camera.lookAt(p.x, p.y + 1.5*a.group.scale.x, p.z);
   }
 }
 function movePlayer(dt) {
@@ -559,11 +564,12 @@ function viewportPoint(cx,cy){
 
 function pickAt(cx, cy) {
   raycaster.setFromCamera(viewportPoint(cx,cy),camera);
-  const hits = raycaster.intersectObjects([...props.map(p => p.group), ...camRegs.filter(c=>c.gizmo.visible).map(c => c.gizmo)], true);
+  const hits = raycaster.intersectObjects([...props.map(p => p.group), ...Object.values(actors).filter(a=>a.present&&a.group.visible).map(a=>a.group), ...camRegs.filter(c=>c.gizmo.visible).map(c => c.gizmo)], true);
   if (!hits.length) return null;
   const u = hits[0].object.userData;
   if (u.propId != null) return { prop: props.find(p => p.id === u.propId) };
   if (u.cameraId) return { cam: camRegs.find(r => r.spec.id === u.cameraId) };
+  if (u.actorName) return { actor: actors[u.actorName] };
   return null;
 }
 
@@ -585,11 +591,52 @@ function setTint(rec, mode) {
 function select(rec) {
   if (selected && selected !== rec) setTint(selected, null);
   selected = rec;
+  selectedModelActor=null;
   if (rec) {
     setTint(rec, 'sel');
     hint(`${rec.spec.type} selected — Q/E rotate · scroll raise/lower · Del remove`);
   }
+  refreshModelInspector();
 }
+
+function modelTarget(){return selected ?? (selectedModelActor?actors[selectedModelActor]:null);}
+function refreshModelInspector(){
+  const target=modelTarget(),panel=document.getElementById('model-inspector');
+  if(!panel)return;panel.hidden=!target;if(!target)return;
+  const size=new THREE.Box3().setFromObject(target.group).getSize(new THREE.Vector3());
+  document.getElementById('model-name').textContent=target.spec.name ?? propAssets.find(a=>a.id===target.spec.type)?.name ?? target.spec.type;
+  const value=Math.round((target.spec.scale??1)*100);
+  document.getElementById('model-size').value=value;document.getElementById('model-size-slider').value=value;
+  document.getElementById('model-dimensions').textContent=`${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m · width, height, depth`;
+}
+function resizeProp(rec,value){
+  modelScale(value);
+  const oldScale=rec.group.scale.clone(),oldPosition=rec.group.position.clone();
+  scaleModel(rec.group,value);
+  const bounds=propBounds(rec),size=bounds.getSize(new THREE.Vector3()),centre=bounds.getCenter(new THREE.Vector3());
+  const blocks=(PROP_HEIGHTS[rec.spec.type]??.7)>0;
+  if(!validAt(centre.x,centre.z,size.x,size.z,bounds.min.y,blocks?size.y:0,rec.colliders)){
+    rec.group.scale.copy(oldScale);rec.group.position.copy(oldPosition);
+    throw new Error('That size overlaps another object or extends beyond the set. Move the model to a clearer spot first.');
+  }
+  rec.spec.scale=value;rec.elev=rec.group.position.y;updateSpec(rec);setCollidersAt(rec);
+}
+function changeModelSize(value){
+  const target=modelTarget();
+  if(!target || !canEditWorld() || drag || (history.pending && history.pending.label!=='Resize model')){hint('Return to live and finish the current edit before resizing.');refreshModelInspector();return;}
+  let started=false;
+  try{
+    modelScale(value);if(value===(target.spec.scale??1))return;
+    if(!history.pending){history.begin('Resize model');started=true;}
+    if(selected)resizeProp(target,value);else{
+      const p=target.group.position;
+      if(!validAt(p.x,p.z,.64*value,.64*value,p.y,1.85*value))throw new Error('That size overlaps scenery. Move the character to a clearer spot first.');
+      scaleModel(target.group,value,false);target.spec.scale=value;
+    }
+    refreshJson();refreshModelInspector();
+  }catch(error){if(history.pending?.label==='Resize model'){if(started)history.discard();else history.commit();}hint(error.message);refreshModelInspector();}
+}
+function finishModelSize(){if(history.pending?.label==='Resize model')history.commit();}
 
 function rotateProp(rec, delta) {
   const before=propBounds(rec),wall=SCENE.environment.customSet?null:before.min.x< -4.49?-4.5:before.max.x>4.49?4.5:null;
@@ -614,7 +661,7 @@ function revalidate(rec) {
   if (!drag || drag.rec !== rec) return;
   const [w, d] = rotatedFootprint(rec);
   const bounds=propBounds(rec);
-  const ok = bounds.min.x>=worldBounds()[0][0]-.301 && bounds.max.x<=worldBounds()[1][0]+.301 && validAt(drag.pos[0], drag.pos[1], w, d, rec.elev, PROP_HEIGHTS[rec.spec.type] ?? 0.7, rec.colliders,false);
+  const ok = bounds.min.x>=worldBounds()[0][0]-.301 && bounds.max.x<=worldBounds()[1][0]+.301 && validAt(drag.pos[0], drag.pos[1], w, d, rec.elev, (PROP_HEIGHTS[rec.spec.type] ?? 0.7)*(rec.spec.scale??1), rec.colliders,false);
   drag.valid = ok;
   setTint(rec, ok ? 'sel' : 'bad');
   window.__ghost = { valid: ok, x: drag.pos[0], z: drag.pos[1], elev: rec.elev, rotY: rec.rotY };
@@ -662,6 +709,7 @@ function moveGhost(e) {
 
 function finishDrag() {
   const rec = drag.rec;
+  const unchanged=drag.kind==='prop'?rec.group.position.x===drag.start[0]&&rec.group.position.z===drag.start[1]&&rec.elev===drag.startElev&&rec.rotY===drag.startRot:JSON.stringify(rec.spec)===JSON.stringify(drag.startSpec);
   if (drag.kind === 'prop') {
     if (!drag.valid) {
       rec.group.position.x = drag.start[0];
@@ -680,7 +728,7 @@ function finishDrag() {
   renderer.domElement.style.cursor = 'crosshair';
   drag = null;
   window.__ghost = null;
-  history.commit();
+  if(unchanged)history.discard();else history.commit();
 }
 
 function startPlacement(type) {
@@ -796,7 +844,8 @@ cv.addEventListener('mousedown',e=>{
   } else if(hit?.prop && canEditWorld()) {
     selectedCam=null;select(hit.prop);history.begin('Move object');
     drag={kind:'prop',rec:hit.prop,pos:[hit.prop.group.position.x,hit.prop.group.position.z],start:[hit.prop.group.position.x,hit.prop.group.position.z],startElev:hit.prop.elev,startRot:hit.prop.rotY,valid:true,placing:false,lastMouse:[e.clientX,e.clientY]};cv.style.cursor='grabbing';
-  } else { select(null);if(camIndex<0)selectedCam=null;startLook(e); }
+  } else if(hit?.actor && canEditWorld()) {select(null);selectedActor=hit.actor.spec.name;selectedModelActor=selectedActor;selectedCam=null;refreshCast();refreshModelInspector();}
+  else { select(null);if(camIndex<0)selectedCam=null;startLook(e); }
 });
 addEventListener('mousemove',e=>{
   if(look) {
@@ -846,6 +895,12 @@ ctxmenu.addEventListener('click',e=>{
 // ---------- scene studio ----------
 const $ = id => document.getElementById(id);
 const cloneData = value => JSON.parse(JSON.stringify(value));
+$('model-size').onchange=e=>{changeModelSize(Number(e.target.value)/100);finishModelSize();};
+$('model-size-slider').oninput=e=>changeModelSize(Number(e.target.value)/100);
+$('model-size-slider').onchange=finishModelSize;
+$('model-size-slider').onblur=finishModelSize;
+$('model-size-reset').onclick=()=>{changeModelSize(1);finishModelSize();};
+$('model-deselect').onclick=()=>{finishModelSize();select(null);};
 const canEditWorld = () => timeline.mode === 'live' && !recorder && !loadingModels;
 const canEditCameras = () => !recorder && !loadingModels && timeline.mode !== 'recording';
 const canLoadAssets = () => !recorder && !loadingModels && !drag && !clipDrag && timeline.mode !== 'recording';
@@ -854,7 +909,7 @@ function prepareAssetEdit() {
   if(timeline.mode === 'playing') timeline.stop();
 }
 const timeline = new PerformanceTimeline(
-  () => ({ worldTime, actors: Object.fromEntries(Object.entries(actors).filter(([, a]) => a.group.visible).map(([name, a]) => [name, { position: a.group.position.toArray(), yaw: a.group.rotation.y, clip: a.clip, clipTime: a.clipTime, layers: cloneData(a.layers) }])) }),
+  () => ({ worldTime, actors: Object.fromEntries(Object.entries(actors).filter(([, a]) => a.group.visible).map(([name, a]) => [name, { position: a.group.position.toArray(), yaw: a.group.rotation.y, scale:a.group.scale.x, clip: a.clip, clipTime: a.clipTime, layers: cloneData(a.layers) }])) }),
   (a, b, alpha, partial = false) => {
     worldTime = THREE.MathUtils.lerp(a.worldTime, b.worldTime, alpha);
     for (const [name, actor] of Object.entries(actors)) {
@@ -865,6 +920,7 @@ const timeline = new PerformanceTimeline(
       actor.group.position.fromArray(from.position).lerp(new THREE.Vector3(...to.position), alpha);
       const delta = Math.atan2(Math.sin(to.yaw - from.yaw), Math.cos(to.yaw - from.yaw));
       actor.group.rotation.y = from.yaw + delta * alpha;
+      actor.group.scale.setScalar(THREE.MathUtils.lerp(from.scale??actor.spec.scale??1,to.scale??from.scale??actor.spec.scale??1,alpha));
       poseActor(actor, from.clip, from.clip === to.clip ? THREE.MathUtils.lerp(from.clipTime, to.clipTime, alpha) : from.clipTime, from.layers ? blendLayers(from.layers, to.layers ?? from.layers, alpha) : null);
     }
   }
@@ -887,8 +943,9 @@ function simulate(dt, recordingActors = null) {
     if(a.velocity.length()<.015)a.velocity.set(0,0);
     const p=a.group.position,old=p.clone();
     const mx=a.velocity.x*dt,mz=a.velocity.y*dt;
-    if(validAt(p.x+mx,p.z,.64,.64,0,1.8))p.x+=mx;else a.velocity.x=0;
-    if(validAt(p.x,p.z+mz,.64,.64,0,1.8))p.z+=mz;else a.velocity.y=0;
+    const actorScale=a.group.scale.x;
+    if(validAt(p.x+mx,p.z,.64*actorScale,.64*actorScale,p.y,1.8*actorScale))p.x+=mx;else a.velocity.x=0;
+    if(validAt(p.x,p.z+mz,.64*actorScale,.64*actorScale,p.y,1.8*actorScale))p.z+=mz;else a.velocity.y=0;
     const actualSpeed=p.distanceTo(old)/dt;
     if(a.velocity.lengthSq()>.001) {
       const targetYaw=Math.atan2(a.velocity.x,a.velocity.y);
@@ -936,6 +993,7 @@ function refreshCast() {
 $('actor-select').onchange = $('control-character').onchange = e => {
   finishCharacterMovement();
   selectedActor=e.target.value;clearMovementKeys();refreshCast();
+  select(null);selectedModelActor=selectedActor;refreshModelInspector();
 };
 $('gesture-select').onchange = e => {
   if (!['live', 'recording'].includes(timeline.mode)) { hint('Return to live to direct a character.'); return; }
@@ -1035,6 +1093,7 @@ function setSidebarTab(tab,focus=false){
     button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;
     $(panel).hidden=!active;if(active&&focus)button.focus();
   }
+  if(tab==='action'&&!selected){selectedModelActor=selectedActor;refreshModelInspector();}
 }
 for(const tab of ['library','action']){
   $(`${tab}-tab`).onclick=()=>setSidebarTab(tab);
@@ -1623,11 +1682,11 @@ function captureEditState() {
     frameFormat:videoSettings.aspect,
     cameraEdit:cloneData({shots:cameraEdit.shots,end:cameraEdit.end}),selectedShot,previewEdit,
     actors:Object.fromEntries(Object.entries(actors).filter(([,a])=>a.present).map(([name,a])=>[name,{
-      position:a.group.position.toArray(),yaw:a.group.rotation.y,clip:a.clip,clipTime:a.clipTime,layers:cloneData(a.layers),
+      position:a.group.position.toArray(),yaw:a.group.rotation.y,scale:a.group.scale.x,clip:a.clip,clipTime:a.clipTime,layers:cloneData(a.layers),
       velocity:a.velocity.toArray(),directed:a.directed,gesture:a.gesture,wp:a.wp,visible:a.group.visible
     }])),
     cameraId:SCENE.cameras[camIndex]?.id??null, free:{position:freeRig.pos.toArray(),yaw:freeRig.yaw,pitch:freeRig.pitch},
-    player:{yaw:player.yaw,pitch:player.pitch}, controlled, controlMode, selectedActor,
+    player:{yaw:player.yaw,pitch:player.pitch}, controlled, controlMode, selectedActor,selectedPropId:selected?.spec.id,selectedModelActor,
     performances:[...timeline.items], active:timeline.active, timelineBase:timeline.base, mode:timeline.mode,time:timeline.time,
     imports:[...importedAssets], props:[...propAssets], characters:[...characterAssets]
   };
@@ -1645,6 +1704,7 @@ function restoreEditState(state) {
     const data=state.actors[name];a.present=!!data;a.group.visible=!!data?.visible;
     if(!data)continue;
     a.spec=SCENE.characters.find(c=>c.name===name);a.group.position.fromArray(data.position);a.group.rotation.y=data.yaw;
+    a.group.scale.setScalar(data.scale??a.spec.scale??1);
     a.velocity.fromArray(data.velocity);a.directed=data.directed;a.gesture=data.gesture;a.wp=data.wp;
     poseActor(a,data.clip,data.clipTime,data.layers);
   }
@@ -1659,6 +1719,7 @@ function restoreEditState(state) {
   cameraEdit.shots=cloneData(state.cameraEdit.shots);cameraEdit.end=state.cameraEdit.end;selectedShot=state.selectedShot;previewEdit=state.previewEdit;adjustingShot=false;
   closePreview();
   syncCameraGizmos();selectedCam=camRegs.find(r=>r.spec===SCENE.cameras[camIndex])??null;rebuildCamButtons();refreshCast();renderLibrary();refreshPerformances();refreshJson();updateCamera();
+  select(props.find(rec=>rec.spec.id===state.selectedPropId)??null);selectedModelActor=state.selectedModelActor??null;refreshModelInspector();
 }
 const history=new EditHistory(captureEditState,restoreEditState);
 function undoRedo(redo=false) {
@@ -1762,7 +1823,7 @@ function agentLibrary() {
 }
 const sceneSnapshot = () => cloneData({
   scene: SCENE,
-  objects: props.map(rec => ({ id: rec.spec.id, assetId: rec.spec.type, position: rec.group.position.toArray(), rotationY: rec.rotY })),
+  objects: props.map(rec => ({ id: rec.spec.id, assetId: rec.spec.type, position: rec.group.position.toArray(), rotationY: rec.rotY,scale:rec.spec.scale??1 })),
   characters: Object.entries(actors).filter(([, a]) => a.present).map(([name, a]) => ({ name, assetId: a.spec.assetId, position: a.group.position.toArray(), rotationY: a.group.rotation.y })),
   reservedCharacterNames: Object.keys(actors),
   library: agentLibrary(), anchors: agentAnchors(),
@@ -1775,7 +1836,7 @@ const sceneSnapshot = () => cloneData({
 function agentClear(asset, rotation, ignore = []) {
   const [w, d] = asset.footprint ?? [0, 0], c = Math.abs(Math.cos(rotation)), s = Math.abs(Math.sin(rotation));
   return ([x, y, z]) => y >= 0 && y <= 9 && validAt(x, z, w*c+d*s, w*s+d*c, y, asset.height, ignore)
-    && (asset.height === 0 || !Object.values(actors).some(actor => actor.present && y < actor.group.position.y + 1.85 && y + asset.height > actor.group.position.y && Math.abs(x-actor.group.position.x) < (w*c+d*s)/2+.32 && Math.abs(z-actor.group.position.z) < (w*s+d*c)/2+.32));
+    && (asset.height === 0 || !Object.values(actors).some(actor => actor.present && y < actor.group.position.y + 1.85*actor.group.scale.x && y + asset.height > actor.group.position.y && Math.abs(x-actor.group.position.x) < (w*c+d*s)/2+.32*actor.group.scale.x && Math.abs(z-actor.group.position.z) < (w*s+d*c)/2+.32*actor.group.scale.x));
 }
 function agentEditReady() {
   if (!window.__studio.ready || recorder || loadingModels || drag || look || clipDrag || shotDrag || pendingShot || history.pending || timeline.mode === 'recording') throw new Error('Finish the current recording, placement or edit before changing the scene.');
@@ -1789,7 +1850,15 @@ const rixseScene = createSceneBridge({
   project: async ({ type, asset, record }, author) => {
     agentEditReady(); prepareAssetEdit();
     if(type==='use_scene'){useSceneAsset(sceneAssets.find(a=>a.id===asset.id),author);return;}
-    const label = `${author === 'agent' ? 'Agent: ' : ''}${type === 'place_asset' ? 'add ' + asset.name : type === 'move_prop' ? 'move object' : 'delete object'}`;
+    const label = `${author === 'agent' ? 'Agent: ' : ''}${type === 'place_asset' ? 'add ' + asset.name : type === 'move_prop' ? 'move object' : type === 'resize_prop'?'resize object':'delete object'}`;
+    if(type==='resize_prop'){
+      const rec=props.find(p=>p.spec.id===record.id);if(!rec)throw new Error('Object no longer exists.');
+      // Validate before opening a history entry; rejected edits leave no pending transaction.
+      const before=captureEditState();
+      resizeProp(rec,record.scale);
+      record.position=rec.group.position.toArray();
+      history.begin(label,author);history.pending.before=before;refreshJson();refreshModelInspector();history.commit();return;
+    }
     if (type === 'delete_prop') {
       const rec = props.find(p => p.spec.id === record.id);
       history.run(label, () => { removeProp(rec); refreshJson(); }, author); return;

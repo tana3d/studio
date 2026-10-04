@@ -24,6 +24,7 @@
       <button id="library-tab" role="tab" aria-selected="true" aria-controls="library">Library</button>
       <button id="action-tab" role="tab" aria-selected="false" aria-controls="cast-panel" tabindex="-1">Direct the action</button>
     </div>
+    <section id="model-inspector" hidden aria-label="Selected model"><div class="model-inspector-heading"><strong id="model-name"></strong><button id="model-deselect" aria-label="Deselect model">×</button></div><label class="model-size-row">Size <input id="model-size" type="number" min="5" max="2000" step="5" value="100" aria-label="Model size percent" />% <button id="model-size-reset" type="button">Reset</button></label><input id="model-size-slider" type="range" min="5" max="1000" step="5" value="100" aria-label="Model size" /><p id="model-dimensions" class="muted"></p></section>
   <section id="library" role="tabpanel" aria-labelledby="library-tab">
     <div class="eyebrow">BUILD YOUR SCENE</div><h1>Asset library</h1>
     <div class="tabs"><button data-tab="props" class="active">Objects</button><button data-tab="characters">Characters</button><button data-tab="scenes">Scenes</button></div>

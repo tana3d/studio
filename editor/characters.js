@@ -51,8 +51,9 @@ export async function createActor(asset, spec) {
   const group = new THREE.Group();
   const model = normalizedModel(gltf, 1.85);
   group.add(model);
+  group.scale.setScalar(spec.scale ?? 1);
   group.position.set(...spec.position);
-  group.traverse(o => o.userData.actor = true);
+  group.traverse(o => {o.userData.actor = true;o.userData.actorName=spec.name;});
   const mixer = new THREE.AnimationMixer(model);
   const clips = gltf.animations.map((clip, i) => {
     const copy = clip.clone();

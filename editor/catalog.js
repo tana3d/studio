@@ -11,7 +11,7 @@ export function modelFile(data, name) {
 }
 export function createCatalog({ register, changed, notice, clearKeys, standalone=false }) {
   const $ = id => document.getElementById(id), dialog = $('catalog-dialog');
-  const saved = new Map(); let page = 1, pages = 1, request = 0, timer, openedBy;
+  const saved = new Map(); let page = 1, pages = 1, request = 0, timer, openedBy, fingerprint='';
   const downloads = new Map(), buttonUpdates = new Map();
   const status = message => { $('catalog-status').textContent = message; };
   const link = (label, url) => {
@@ -36,9 +36,9 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
     }).finally(() => downloads.delete(id));
     downloads.set(id,pending);return pending;
   }
-  async function load() {
-    const revision = ++request; status('Loading the library…'); $('catalog-grid').setAttribute('aria-busy','true');
-    $('catalog-prev').disabled=true; $('catalog-next').disabled=true;
+  async function load({quiet=false}={}) {
+    const revision = ++request;if(!quiet){status('Loading the library…'); $('catalog-grid').setAttribute('aria-busy','true');
+    $('catalog-prev').disabled=true; $('catalog-next').disabled=true;}
     const q=$('catalog-search').value.trim(),category=$('catalog-category').value;
     try {
       const data = libraryNative ? await libraryNative.invoke('library_catalog',{q,category,page}) : await (async () => {
@@ -48,6 +48,7 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
       })();
       if(revision!==request)return;
       if(!Array.isArray(data.assets))throw new Error('Could not read the library. Please try again.');
+      const nextFingerprint=JSON.stringify(data);if(quiet&&nextFingerprint===fingerprint)return;fingerprint=nextFingerprint;
       pages=data.pages;page=data.page;
       $('catalog-grid').replaceChildren();buttonUpdates.clear();
       for(const asset of data.assets){
@@ -70,7 +71,7 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
       status(data.total?`${data.total.toLocaleString()} assets · Page ${page} of ${pages}`:'No assets found. Try another search.');
       $('catalog-page').textContent=pages?`${page} / ${pages}`:'';
       $('catalog-prev').disabled=page<=1;$('catalog-next').disabled=page>=pages;
-    } catch(error){if(revision===request){status(error.message??String(error));$('catalog-grid').replaceChildren();}}
+    } catch(error){if(revision===request&&!quiet){status(error.message??String(error));$('catalog-grid').replaceChildren();}}
     finally{if(revision===request)$('catalog-grid').setAttribute('aria-busy','false');}
   }
   const size=(width,height,left,top)=>{
@@ -113,11 +114,16 @@ export function createCatalog({ register, changed, notice, clearKeys, standalone
   $('collection-folder').hidden=!libraryNative;
   $('collection-folder').onclick=()=>libraryNative.invoke('library_open_folder').catch(error=>status(String(error)));
   if(!libraryNative)$('collection-path').textContent='Open the desktop app to save assets to your collection.';
+  const refreshVisible=()=>{if(document.visibilityState==='visible'&&(standalone||dialog.open)&&!downloads.size&&$('catalog-grid').getAttribute('aria-busy')!=='true')void load({quiet:true});};
+  window.addEventListener('focus',refreshVisible);document.addEventListener('visibilitychange',refreshVisible);
+  const polling=setInterval(()=>{if(document.hasFocus())refreshVisible();},30000);
+  window.addEventListener('pagehide',()=>clearInterval(polling),{once:true});
   const events=window.parent.__TAURI__?.event;
   if(events){
     const stop=events.listen('library-changed',()=>void collect().catch(error=>notice(String(error))));
     window.addEventListener('pagehide',()=>void stop.then(unlisten=>unlisten()).catch(()=>{}),{once:true});
     void stop.catch(error=>notice(`Library updates unavailable: ${error}`));
+    if(standalone){const refreshStop=events.listen('catalog-refresh',refreshVisible);void refreshStop.catch(error=>notice(`Library refresh unavailable: ${error}`));window.addEventListener('pagehide',()=>void refreshStop.then(unlisten=>unlisten()).catch(()=>{}),{once:true});}
   }
   return { saved, collect, download, refresh:load, open };
 }

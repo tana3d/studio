@@ -10,12 +10,12 @@ const location = { anchor: str('anchor', true), x: num, y: num, z: num, dx: num,
 export function createSceneBridge({ read, project, clear, prepare = async () => {}, id = () => crypto.randomUUID() }) {
   const audit = [];
   const reject = message => { throw new Rejected(message); };
-  const at = (state, asset, p, ignore) => {
+  const at = (state, asset, p, ignore, scale = 1) => {
     const rotationY = p.rotation_y ?? 0;
     try {
       return { ...resolvePlacement({ anchor: p.anchor,
         position: p.x == null && p.y == null && p.z == null ? null : [p.x, p.y, p.z],
-        offset: [p.dx ?? 0, p.dy ?? 0, p.dz ?? 0] }, state.anchors, clear(asset, rotationY, ignore)), rotationY };
+        offset: [p.dx ?? 0, p.dy ?? 0, p.dz ?? 0] }, state.anchors, clear({...asset,footprint:asset.footprint?.map(v=>v*scale),height:asset.height*scale}, rotationY, ignore)), rotationY };
     } catch (error) { reject(error.message); }
   };
   const actions = [
@@ -54,9 +54,23 @@ export function createSceneBridge({ read, project, clear, prepare = async () => 
         if (!existing) reject('Object no longer exists. Read the scene again.');
         const asset = state.library.find(a => a.id === existing.assetId);
         if (!asset) reject('Unknown library asset.');
-        const record = { ...existing, ...at(state, asset, p, existing.id) };
+        const record = { ...existing, ...at(state, asset, p, existing.id, existing.scale ?? 1) };
         return { ...state, objects: state.objects.map(o => o.id === record.id ? record : o),
           operation: { type: 'move_prop', asset, record }, result: { ok: true, ...record } };
+      },
+    }),
+    defineAction('resize_prop', {
+      describe:'Resize a placed object uniformly. Scale 1 is its original size; 5 makes it five times larger. Keeps its floor height and updates collisions. Undo restores its size.',
+      params:{object_id:str('object'),scale:{type:'number'}},
+      apply:(state,p)=>{
+        const existing=state.objects.find(o=>o.id===p.object_id);
+        if(!existing)reject('Object no longer exists. Read the scene again.');
+        if(!Number.isFinite(p.scale)||p.scale<.05||p.scale>20)reject('Scale must be between 0.05 and 20.');
+        const asset=state.library.find(a=>a.id===existing.assetId);
+        if(!asset)reject('Unknown library asset.');
+        at(state,asset,{x:existing.position[0],y:existing.position[1],z:existing.position[2],rotation_y:existing.rotationY},existing.id,p.scale);
+        const record={...existing,scale:p.scale};
+        return {...state,objects:state.objects.map(o=>o.id===record.id?record:o),operation:{type:'resize_prop',asset,record},result:{ok:true,...record}};
       },
     }),
     defineAction('delete_prop', {
@@ -73,7 +87,7 @@ export function createSceneBridge({ read, project, clear, prepare = async () => 
     { type: 'asset', list: s => s.library, id: a => a.id,
       fields: ['id', 'name', 'category', 'footprint', 'height'].map(name => ({ name })) },
     { type: 'object', list: s => s.objects, id: o => o.id,
-      fields: [{ name: 'assetId', ref: 'asset' }, { name: 'position' }, { name: 'rotationY', default: 0 }] },
+      fields: [{ name: 'assetId', ref: 'asset' }, { name: 'position' }, { name: 'rotationY', default: 0 }, {name:'scale',default:1}] },
     { type: 'character', list: s => s.characters, id: c => c.name,
       fields: [{ name: 'name' }, { name: 'assetId', ref: 'asset' }, { name: 'position' }, { name: 'rotationY', default: 0 }] },
     { type: 'anchor', list: s => Object.entries(s.anchors).map(([id, a]) => ({ id, ...a })), id: a => a.id,

@@ -589,6 +589,9 @@ pub fn library_open_browser(app: tauri::AppHandle) -> Result<(), String> {
         window.show().map_err(|e| e.to_string())?;
         window.unminimize().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
+        window
+            .emit("catalog-refresh", ())
+            .map_err(|e| e.to_string())?;
         return Ok(());
     }
     tauri::WebviewWindowBuilder::new(

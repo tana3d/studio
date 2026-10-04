@@ -2,6 +2,15 @@
 * { box-sizing:border-box; }
 html,body { margin:0; height:100%; overflow:hidden; background:#080e12; color:var(--text); font:13px/1.5 'DM Sans',system-ui,sans-serif; }
 canvas { display:block; cursor:crosshair; }
+#model-inspector { padding:12px;margin:10px 0;border:1px solid #66817855;border-radius:8px;background:#1d292c; }
+.model-inspector-heading { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.model-inspector-heading strong { overflow-wrap:anywhere; }
+#model-deselect { padding:0 6px;background:transparent;border:0;font-size:20px; }
+#model-inspector .model-size-row { display:flex;gap:6px;align-items:center;margin:8px 0; }
+#model-size { width:75px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:#101719;color:var(--text); }
+#model-size-reset { padding:4px 8px;margin-left:auto; }
+#model-size-slider { width:100%;accent-color:var(--accent); }
+#model-dimensions { margin:4px 0 0;font-size:11px; }
 button,input,select { font:inherit; }
 button { border:1px solid #ffffff20; background:#263034; color:var(--text); padding:8px 12px; border-radius:6px; cursor:pointer; transition:background .15s; white-space:nowrap; }
 button:hover { background:#364347; }

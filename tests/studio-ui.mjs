@@ -269,6 +269,17 @@ try {
     return {custom:window.__scene.environment.customSet,parts:window.__scene.environment.props.length,bounds:window.__scene.environment.bounds};
   });
   assert.equal(sceneResult.custom,true);assert.equal(sceneResult.parts,1);assert.ok(sceneResult.bounds[1][0]>=10);
+  const modelId=await editor.evaluate(()=>window.__scene.environment.props[0].id);
+  const resize=await editor.evaluate(id=>window.__studio.rixse.dispatch({type:'resize_prop',payload:{object_id:id,scale:1.5}},'you'),modelId);
+  assert.equal(resize.ok,true);assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1.5);
+  const selectPoint=await editor.evaluate(()=>window.__project(2,2.25,1));
+  const iframeBox=await page.locator('iframe').boundingBox();await page.mouse.click(iframeBox.x+selectPoint[0],iframeBox.y+selectPoint[1]);
+  await editor.locator('#model-inspector').waitFor({state:'visible'});await editor.locator('#model-size').fill('200');await editor.locator('#model-size').press('Tab');
+  assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),2);
+  await editor.locator('#undo').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1.5);
+  await editor.locator('#redo').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),2);
+  await editor.locator('#model-size-reset').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1);
+  await editor.locator('#undo').click();await editor.locator('#undo').click();await editor.locator('#undo').click();
   await editor.locator('#undo').click();assert.equal(await editor.evaluate(()=>JSON.stringify(window.__scene.environment)),previousSet);
   await mkdir('.tmp', { recursive: true });
   await page.screenshot({ path: '.tmp/studio-desktop.png' });
