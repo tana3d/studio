@@ -1,0 +1,22 @@
+name: Studio runner connectivity
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.repository == 'tana3d/studio' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        machine: [bugsy, demon]
+    runs-on:
+      group: studio-releases
+      labels: [self-hosted, studio, '${{ matrix.machine }}']
+    timeout-minutes: 5
+    steps:
+      - name: Verify the selected host
+        run: |
+          uname -s
+          uname -m
+          printf 'Studio runner connected successfully.\n'
