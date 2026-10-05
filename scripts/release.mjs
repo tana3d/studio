@@ -2,13 +2,16 @@ import { mkdir, writeFile, readFile, copyFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { releaseIdentity, platforms, walk, describeFile, selectInstaller, assembleRelease, publishRelease } from './release-lib.mjs';
+import { releaseIdentity, platforms, walk, describeFile, selectInstaller, assembleRelease, publishRelease, verifyReleaseTag } from './release-lib.mjs';
 
 const root=resolve(import.meta.dirname,'..'),command=process.argv[2];
 const config=JSON.parse(await readFile(join(root,'src-tauri/tauri.conf.json'),'utf8'));
-const identity=releaseIdentity({...process.env,STUDIO_BASE_VERSION:config.version});
+const identity=releaseIdentity(process.env);
 const output=join(root,'.tmp/release');await mkdir(output,{recursive:true});
-if(command==='configure') {
+if(command==='validate') {
+  if(!await verifyReleaseTag(identity,process.env))throw Error('The version tag must point to a commit on main.');
+  console.log(`Validated Studio ${identity.version} (${identity.tag}) at ${identity.commit}.`);
+} else if(command==='configure') {
   const platform=process.env.RELEASE_PLATFORM,spec=platforms[platform];
   if(!spec)throw Error('Unsupported release platform.');
   const signing=platform.startsWith('darwin')?{macOS:{signingIdentity:process.env.RELEASE_PUBLISH==='true'?config.bundle.macOS.signingIdentity:'-'}}:{};
@@ -43,8 +46,8 @@ if(command==='configure') {
       async writeVersion(manifest){await s3.send(new PutObjectCommand({Bucket,Key:`releases/${identity.buildId}/manifest.json`,Body:JSON.stringify(manifest),ContentType:'application/json',CacheControl:'public, max-age=31536000, immutable'}));},
       async writeLatest(manifest,etag){await s3.send(new PutObjectCommand({Bucket,Key:'latest.json',Body:JSON.stringify(manifest),ContentType:'application/json',CacheControl:'no-cache',...(etag?{IfMatch:etag}:{IfNoneMatch:'*'})}));},
     };
-    const isCurrent=async()=>{const response=await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/git/ref/heads/main`,{headers:{Authorization:`Bearer ${process.env.GITHUB_TOKEN}`,Accept:'application/vnd.github+json'}});if(!response.ok)throw Error('Cannot verify the main commit.');return (await response.json()).object.sha===identity.commit;};
-    await publishRelease(store,release,isCurrent);
+    const manifest=await publishRelease(store,release,()=>verifyReleaseTag(identity,process.env));
+    await writeFile(join(output,'manifest.json'),JSON.stringify(manifest,null,2));
     console.log(`Published Studio ${identity.version}: https://tana.gg/download`);
   }
-} else throw Error('Use configure, collect, assemble or publish.');
+} else throw Error('Use validate, configure, collect, assemble or publish.');

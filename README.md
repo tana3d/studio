@@ -1,6 +1,6 @@
 # Studio by tana
 
-Pushes to main run the [distribution pipeline](docs/distribution.md): build
+Version tags such as `v0.1.0` run the [distribution pipeline](docs/distribution.md): build
 installers on GitHub, sign and notarize macOS, verify uploads in R2, then update
 the downloads at https://tana.gg/download. Website deployments remain managed by
 Cloudflare's Git connection.

@@ -1,18 +1,18 @@
 name: Studio distribution
 on:
   push:
-    branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish signed installers to R2 (false builds test bundles only)
+        description: Select a version tag; false builds test bundles without publishing
         type: boolean
         default: true
 permissions:
   contents: read
 concurrency:
-  group: studio-distribution-main
-  cancel-in-progress: true
+  group: studio-release-${{ github.ref }}
+  cancel-in-progress: false
 env:
   RELEASE_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
   NEXT_TELEMETRY_DISABLED: '1'
@@ -21,7 +21,7 @@ env:
 
 jobs:
   validate:
-    if: github.repository == 'tana3d/studio' && github.ref == 'refs/heads/main'
+    if: github.repository == 'tana3d/studio' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -33,6 +33,10 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Validate version tag and main ancestry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs validate
       - run: npm run build
       - run: npm run check
       - run: npm test
@@ -42,7 +46,7 @@ jobs:
 
   bundle:
     needs: validate
-    if: github.repository == 'tana3d/studio' && github.ref == 'refs/heads/main'
+    if: github.repository == 'tana3d/studio' && startsWith(github.ref, 'refs/tags/v')
     name: Bundle ${{ matrix.platform }}
     environment: release
     strategy:
@@ -135,7 +139,8 @@ jobs:
         run: node scripts/apple-keychain.mjs cleanup
 
   source:
-    if: github.repository == 'tana3d/studio' && github.ref == 'refs/heads/main'
+    needs: validate
+    if: github.repository == 'tana3d/studio' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -158,6 +163,11 @@ jobs:
 
   publish:
     needs: [bundle, source]
+    concurrency:
+      group: studio-release-publisher
+      cancel-in-progress: false
+    permissions:
+      contents: write
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -189,3 +199,8 @@ jobs:
           name: release-manifest
           path: .tmp/release/manifest.json
           retention-days: 7
+      - name: Publish release notes and download links
+        if: env.RELEASE_PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/github-release.mjs
