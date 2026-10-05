@@ -1,7 +1,6 @@
-name: Studio checks
+name: Public CI
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:

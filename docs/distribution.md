@@ -28,12 +28,15 @@ The website continues to deploy through Cloudflare's Git connection. Studio's
 workflow uploads release objects only; it never deploys the website.
 
 Repository variables: `R2_ACCOUNT_ID`, `R2_BUCKET`.
-Repository secrets: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (object read/write
+The `release` environment permits only the `main` branch. Its encrypted secrets
+are `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (object read/write
 for this bucket only), `APPLE_CERTIFICATE` (base64 Developer ID .p12),
 `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific Apple
 notarization password). Apple team ID is `6LV9UQMTRU`. Certificates are imported
 into temporary runner keychains, deleted after the macOS job. No secrets are
-available to pull-request workflows.
+available to Public CI, which runs on pushes and pull requests without selecting
+the release environment. The release workflow runs on pushes to `main` and can
+also be dispatched manually on `main`.
 
 Before the first public release, configure Apple secrets and run the workflow
 with publication enabled. A passing dry run proves packaging but does not prove

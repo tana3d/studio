@@ -9,7 +9,7 @@ const keychain=join(directory,'studio-signing.keychain-db');
 const run=(args,required=true)=>{const result=spawnSync('security',args,{stdio:'pipe'});if(required&&(result.error||result.status!==0))throw Error(`Apple keychain ${args[0]} failed. Check the signing credentials.`);};
 if(process.argv[2]==='cleanup'){run(['delete-keychain',keychain],false);}
 else {
-  for(const name of ['APPLE_CERTIFICATE','APPLE_CERTIFICATE_PASSWORD','APPLE_ID','APPLE_PASSWORD'])if(!process.env[name])throw Error(`Add the ${name} GitHub Actions secret before publishing macOS installers.`);
+  for(const name of ['APPLE_CERTIFICATE','APPLE_CERTIFICATE_PASSWORD','APPLE_ID','APPLE_PASSWORD'])if(!process.env[name])throw Error(`Add the ${name} secret to the release environment before publishing macOS installers.`);
   const file=join(directory,'studio-signing.p12'),password=randomBytes(32).toString('hex');
   writeFileSync(file,Buffer.from(process.env.APPLE_CERTIFICATE,'base64'),{mode:0o600});
   try {
