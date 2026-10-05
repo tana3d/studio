@@ -1,6 +1,6 @@
 [package]
 name = "tana-studio"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tana Studio desktop scene and video editor"
 edition = "2021"
 license = "Apache-2.0"
@@ -32,6 +32,8 @@ tokio = { version = "1", features = ["sync", "macros", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 zega = { git = "https://github.com/zegadb/zega", rev = "4ecaf43064c7320cd9d587fc68f21919e50ebc1d", default-features = false }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -97,6 +97,9 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: node scripts/apple-keychain.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm test
@@ -106,6 +109,10 @@ jobs:
           APPLE_ID: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_PASSWORD || '' }}
           APPLE_TEAM_ID: 6LV9UQMTRU
+          APPLE_API_KEY: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_API_KEY || '' }}
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_API_ISSUER || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --config .tmp/release-config.json
       - run: npm run check
       - name: Verify the bundled Blender converter

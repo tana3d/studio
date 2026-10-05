@@ -2,7 +2,7 @@ import { mkdir, writeFile, readFile, copyFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { releaseIdentity, platforms, walk, describeFile, selectInstaller, assembleRelease, publishRelease, verifyReleaseTag } from './release-lib.mjs';
+import { releaseIdentity, platforms, walk, describeFile, describeUpdate, selectInstaller, assembleRelease, publishRelease, verifyReleaseTag } from './release-lib.mjs';
 
 const root=resolve(import.meta.dirname,'..'),command=process.argv[2];
 const config=JSON.parse(await readFile(join(root,'src-tauri/tauri.conf.json'),'utf8'));
@@ -24,10 +24,14 @@ if(command==='validate') {
   const installer=selectInstaller(await walk(join(root,'.target/release/bundle',directory)),identity,platform);
   const file=await describeFile(installer,identity,platform);
   await copyFile(installer,join(output,file.filename));
-  await writeFile(join(output,`${platform}.json`),JSON.stringify({...identity,file},null,2));
+  const updatePath=platform.startsWith('darwin')?join(root,'.target/release/bundle/macos/Studio.app.tar.gz'):installer;
+  const signature=(await readFile(`${updatePath}.sig`,'utf8')).trim();
+  const update=await describeUpdate(updatePath,signature,identity,platform,config.plugins.updater.pubkey);
+  if(update.filename!==file.filename)await copyFile(updatePath,join(output,update.filename));
+  await writeFile(join(output,`${platform}.json`),JSON.stringify({...identity,file,update},null,2));
   console.log(`Prepared ${platform}: ${file.bytes} bytes, SHA-256 ${file.sha256}`);
 } else if(command==='publish'||command==='assemble') {
-  const release=await assembleRelease(resolve(process.argv[3]??'.tmp/artifacts'),identity);
+  const release=await assembleRelease(resolve(process.argv[3]??'.tmp/artifacts'),identity,config.plugins.updater.pubkey);
   if(command==='assemble') {
     await writeFile(join(output,'manifest.json'),JSON.stringify(release,(_key,value)=>_key==='path'?undefined:value,2));
     console.log(`Verified ${release.files.length} installers and ${release.sources.length} source archives.`);

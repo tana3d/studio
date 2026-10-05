@@ -2,6 +2,7 @@
 import { useRef, useEffect } from 'react';
 import StudioChat from '../components/StudioChat';
 import ChatPanelControls from '../components/ChatPanelControls';
+import StudioUpdater from '../components/StudioUpdater';
 
 export default function Home() {
   const editor = useRef<HTMLIFrameElement>(null);
@@ -18,6 +19,7 @@ export default function Home() {
     <StudioChat editor={editor} />
     <section className="editor-pane" aria-label="Tana scene editor">
       <iframe ref={editor} src="/studio/index.html" title="Studio video editor" allow="autoplay" />
+      <StudioUpdater />
     </section>
     <ChatPanelControls />
   </main>;

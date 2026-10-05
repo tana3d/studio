@@ -9,8 +9,8 @@ button:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px s
 .studio-layout { height:100dvh; display:flex; position:relative; }
 .studio-layout > .chat-pane { flex:0 0 clamp(260px,var(--chat-width,25%),50%); }
 .studio-layout[data-chat-collapsed=true] > .chat-pane { display:none; }
-.editor-pane { flex:1; min-width:0; height:100%; }
-.editor-pane iframe { border:0; width:100%; height:100%; display:block; }
+.editor-pane { flex:1; min-width:0; height:100%; display:flex; flex-direction:column; }
+.editor-pane iframe { border:0; width:100%; flex:1; min-height:0; display:block; }
 .chat-pane { display:flex; flex-direction:column; min-height:0; min-width:0; border-right:1px solid var(--line); }
 .chat-header { display:flex; align-items:center; justify-content:space-between; padding:20px 22px 14px; gap:12px; }
 .brand { display:flex; align-items:baseline; gap:9px; }
@@ -48,4 +48,13 @@ button:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px s
 .primary:hover { background:#d4efb8; }
 .notice { color:var(--muted); font-size:12px; margin:12px 0 0; }
 .error { color:#ffc9b8; font-size:13px; padding:0 22px; }
+.studio-update { flex:none; padding:10px 16px; background:var(--panel); border-top:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.studio-update-heading { min-width:150px; }
+.studio-update > p { flex:1; }
+.studio-update > progress { flex-basis:100%; height:6px; }
+.studio-update-heading,.studio-update-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.studio-update-heading button { padding:0 7px; font-size:22px; line-height:1.2; }
+.studio-update p { margin:10px 0; color:var(--muted); }
+.studio-update [role=alert] { color:#ffc9b8; }
+.studio-update progress { width:100%; accent-color:var(--accent); margin-bottom:10px; }
 @media(max-width:1200px) { .chat-header,.messages,.account { padding-left:14px; padding-right:14px; } .chat-header { gap:6px; } .chat-header-actions { gap:4px; } .chat-header-actions > button:first-child { padding:7px 9px; } .composer { padding-left:14px; padding-right:14px; } }

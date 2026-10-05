@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { generateKeyPairSync, randomBytes, createHash, sign } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseIdentity, compareVersions, verifyReleaseTag, platforms, describeFile, selectInstaller, assembleRelease, publishRelease } from '../scripts/release-lib.mjs';
+import { releaseIdentity, compareVersions, verifyReleaseTag, platforms, describeFile, describeUpdate, verifyUpdate, selectInstaller, assembleRelease, publishRelease } from '../scripts/release-lib.mjs';
 import { releaseNotes, publishGitHubRelease } from '../scripts/github-release.mjs';
 const environment={GITHUB_RUN_NUMBER:'23',GITHUB_RUN_ATTEMPT:'2',GITHUB_SHA:'a'.repeat(40),GITHUB_REF:'refs/tags/v0.1.0',GITHUB_REPOSITORY:'tana3d/studio',GITHUB_TOKEN:'test-token'};
 const identity=releaseIdentity(environment);
+const signing=generateKeyPairSync('ed25519'),keyId=randomBytes(8);
+const pubkey=Buffer.from(`untrusted comment: test key\n${Buffer.concat([Buffer.from('Ed'),keyId,signing.publicKey.export({format:'der',type:'spki'}).subarray(-32)]).toString('base64')}\n`).toString('base64');
+async function signatureFor(file,version=identity.version) {
+ const bytes=await readFile(file),sig=sign(null,createHash('blake2b512').update(bytes).digest(),signing.privateKey);
+ const comment=`timestamp:123\tfile:test\tversion:${version}`,global=sign(null,Buffer.concat([sig,Buffer.from(comment)]),signing.privateKey);
+ return Buffer.from(`untrusted comment: fixture\n${Buffer.concat([Buffer.from('ED'),keyId,sig]).toString('base64')}\ntrusted comment: ${comment}\n${global.toString('base64')}\n`).toString('base64');
+}
 test('the version comes from the tag while runs and retries have independent build identities',()=>{
   assert.equal(identity.version,'0.1.0');assert.equal(identity.tag,'v0.1.0');assert.equal(identity.buildId,'23-2-aaaaaaaaaaaa');
   const retry=releaseIdentity({...environment,GITHUB_RUN_NUMBER:'24',GITHUB_RUN_ATTEMPT:'3'});
@@ -23,7 +31,11 @@ async function fixture() {
   const directory=await mkdtemp(join(tmpdir(),'studio-release-'));
   for(const platform of Object.keys(platforms)) {
     const file=join(directory,`Studio-${identity.version}-${platform}${platforms[platform].extension}`);await writeFile(file,'installer '+platform);
-    const record=await describeFile(file,identity,platform);await writeFile(join(directory,`${platform}.json`),JSON.stringify({...identity,file:record}));
+    const record=await describeFile(file,identity,platform);
+    const updateFile=platform.startsWith('darwin')?join(directory,`Studio-${identity.version}-${platform}.app.tar.gz`):file;
+    if(updateFile!==file)await writeFile(updateFile,'update '+platform);
+    const update=await describeUpdate(updateFile,await signatureFor(updateFile),identity,platform,pubkey);
+    await writeFile(join(directory,`${platform}.json`),JSON.stringify({...identity,file:record,update}));
   }
   for(const name of ['blender-4.5.14.tar.xz','studio-source.tar.gz'])await writeFile(join(directory,name),'corresponding source');
   return directory;
@@ -31,10 +43,10 @@ async function fixture() {
 test('assembly rejects missing platforms, changed payloads and mixed builds',async()=>{
   const directory=await fixture();
   try {
-    const release=await assembleRelease(directory,identity);assert.equal(release.files.length,4);assert.equal(release.sources.length,2);
-    await writeFile(join(directory,'Studio-0.1.0-win32-x64.exe'),'corruption');await assert.rejects(assembleRelease(directory,identity),/Corrupt/);
-    await rm(join(directory,'win32-x64.json'));await assert.rejects(assembleRelease(directory,identity),/Missing/);
-    await writeFile(join(directory,'win32-x64.json'),JSON.stringify({...identity,commit:'b'.repeat(40),file:{platform:'win32-x64'}}));await assert.rejects(assembleRelease(directory,identity),/Mixed/);
+    const release=await assembleRelease(directory,identity,pubkey);assert.equal(release.files.length,4);assert.equal(release.sources.length,2);assert.equal(release.updates.length,4);
+    await writeFile(join(directory,'Studio-0.1.0-win32-x64.exe'),'corruption');await assert.rejects(assembleRelease(directory,identity,pubkey),/Corrupt/);
+    await rm(join(directory,'win32-x64.json'));await assert.rejects(assembleRelease(directory,identity,pubkey),/Missing/);
+    await writeFile(join(directory,'win32-x64.json'),JSON.stringify({...identity,commit:'b'.repeat(40),file:{platform:'win32-x64'}}));await assert.rejects(assembleRelease(directory,identity,pubkey),/Mixed/);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
 test('publication never changes latest when upload, readback or tag validation fails',async()=>{
@@ -82,7 +94,7 @@ test('tag verification rejects deleted or moved tags and commits outside main',a
 test('release notes communicate the exact version and immutable downloads',async()=>{
   const directory=await fixture();
   try {
-    const release=await assembleRelease(directory,identity),notes=releaseNotes(release,'## Changes\n\nNew character controls.');
+    const release=await assembleRelease(directory,identity,pubkey),notes=releaseNotes(release,'## Changes\n\nNew character controls.');
     assert.ok(notes.includes('Studio **0.1.0**'));assert.ok(notes.includes('Studio-0.1.0-darwin-arm64.dmg'));
     assert.ok(notes.includes(release.files[0].url));assert.ok(notes.includes(release.files[0].sha256));assert.ok(notes.includes('New character controls.'));
     assert.ok(!notes.includes(directory));
@@ -117,4 +129,31 @@ test('GitHub release retries preserve owner-edited notes and reject mixed identi
   assert.equal(calls,1);
   await assert.rejects(publishGitHubRelease({...manifest,commit:'b'.repeat(40)},{...environment,GH_TOKEN:'test-token'},request),/published version/);
   assert.equal(calls,1);
+});
+
+test('signed updates bind payload, publisher key, comment and release version',async()=>{
+ const directory=await fixture();
+ try {
+  const file=join(directory,'Studio-0.1.0-darwin-arm64.app.tar.gz'),signature=await signatureFor(file);
+  await verifyUpdate(file,signature,pubkey,identity.version);
+  await assert.rejects(verifyUpdate(file,signature,pubkey,'0.2.0'),/version mismatch/);
+  const tampered=Buffer.from(Buffer.from(signature,'base64').toString().replace('timestamp:123','timestamp:124')).toString('base64');
+  await assert.rejects(verifyUpdate(file,tampered,pubkey,identity.version),/comment signature/);
+  const wrongKey=Buffer.from(pubkey,'base64').toString().split('\n');
+  const binary=Buffer.from(wrongKey[1],'base64');binary[2]^=1;wrongKey[1]=binary.toString('base64');
+  await assert.rejects(verifyUpdate(file,signature,Buffer.from(wrongKey.join('\n')).toString('base64'),identity.version),/key or signed version/);
+  await writeFile(file,'changed update payload');
+  await assert.rejects(verifyUpdate(file,signature,pubkey,identity.version),/payload signature/);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
+test('publication verifies Mac update bundles and uploads shared installers only once',async()=>{
+ const directory=await fixture();
+ try{
+  const release=await assembleRelease(directory,identity,pubkey),calls=[];
+  const store={readManifest:async()=>({}),upload:async file=>calls.push(file.key),verify:async file=>file.sha256,writeVersion:async manifest=>{assert.ok(manifest.updates.every(item=>!item.path));},writeLatest:async()=>calls.push('latest')};
+  await publishRelease(store,release,async()=>true);
+  assert.equal(new Set(calls).size,9);assert.equal(calls.length,9);assert.equal(calls.at(-1),'latest');
+  const metadata=join(directory,'darwin-arm64.json'),record=JSON.parse(await readFile(metadata,'utf8'));delete record.update;
+  await writeFile(metadata,JSON.stringify(record));await assert.rejects(assembleRelease(directory,identity,pubkey),/Missing signed/);
+ }finally{await rm(directory,{recursive:true,force:true});}
 });

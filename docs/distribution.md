@@ -21,7 +21,7 @@ macOS requires version 11 or newer, matching the bundled converter's minimum.
 Windows installers are currently unsigned; no Windows signing certificate is
 configured. Linux builds use the Ubuntu 24.04 runner.
 
-All four installers and corresponding source archives must succeed. The publisher
+All four installers, signed updater payloads and corresponding source archives must succeed. The publisher
 checks artifact SHA-256 values, uploads to the private `tana-studio-releases` R2
 bucket, and streams every object back to verify its bytes. It writes
 `releases/<build-id>/manifest.json` before conditionally updating `latest.json`.
@@ -48,8 +48,11 @@ Repository variables: `R2_ACCOUNT_ID`, `R2_BUCKET`.
 The `release` environment permits only tags matching `v*.*.*`. Its encrypted secrets
 are `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (object read/write
 for this bucket only), `APPLE_CERTIFICATE` (base64 Developer ID .p12),
-`APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific Apple
-notarization password). Apple team ID is `6LV9UQMTRU`. Certificates are imported
+`APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY` (Key ID), `APPLE_API_ISSUER`
+(Issuer ID), `APPLE_API_PRIVATE_KEY` (.p8 contents), `TAURI_SIGNING_PRIVATE_KEY`
+and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The updater key is separate from the
+Apple certificate and never ships in the app. Apple ID plus an app-specific
+password remains an optional fallback; never use the normal Apple password. Apple team ID is `6LV9UQMTRU`. Certificates are imported
 into temporary runner keychains, deleted after the macOS job. No secrets are
 available to Public CI, which runs on pushes and pull requests without selecting
 the release environment. The release workflow runs on version-tag pushes and can
@@ -77,5 +80,27 @@ standing; a billing lock prevents jobs from starting, even before checkout.
 
 Rollback: use an already verified version manifest to replace `latest.json` with
 a conditional R2 write. Do not delete installer objects referenced by a published
-manifest. Automatic in-app updates are separate future work; this pipeline serves
-fresh installers from the website.
+manifest. The in-app updater accepts only newer versions.
+
+## In-app updates
+
+The Tauri updater checks `https://tana.gg/api/updates/<target>/<arch>/<version>`
+after startup, every six hours, and when focused after an hour. Offline checks are
+quiet. A small notice lets the user download with progress, then explicitly
+confirm a restart. Downloading never installs or interrupts the current scene.
+Scenes are currently in memory, so keep recordings before confirming a restart.
+The separate catalog window cannot invoke updater or restart commands.
+
+The website serves 204 when there is no newer compatible release, and 200 with
+Tauri's version, date, notes, download URL and signature otherwise. It reads the
+same atomic `latest.json` as the website button. macOS uses a signed `.app.tar.gz`;
+Windows and Linux reuse the signed NSIS/AppImage installer. The release pipeline
+verifies Minisign signatures and the version in their trusted comment before
+publication; clients also require this signed version to match the update feed.
+All update downloads use immutable version URLs and support resumable ranges.
+
+The first updater-enabled version is 0.2.0. Older copies without the updater
+must be replaced by downloading that version from the website. Future releases
+use the same signing key and appear automatically. Back up the encrypted private
+key and its password securely; losing this key prevents updates to existing apps.
+A key change requires an intentionally planned transition, not regeneration.

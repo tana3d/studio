@@ -38,6 +38,17 @@ try {
     window.__TAURI_INTERNALS__ = {
       transformCallback: callback => { const id = window.testCallbacks.size + 1; window.testCallbacks.set(id, callback); return id; },
       invoke: async (command, args) => {
+        if(command==='plugin:updater|check')return{rid:91,currentVersion:'0.2.0',version:'0.2.1',rawJson:{}};
+        if(command==='plugin:updater|download'){
+          window.testUpdateChannel=args.onEvent;
+          args.onEvent.onmessage({event:'Started',data:{contentLength:100}});
+          args.onEvent.onmessage({event:'Progress',data:{chunkLength:25}});
+          if(window.failTestUpdateDownload){window.failTestUpdateDownload=false;throw Error('Signature rejected');}
+          return await new Promise(resolve=>{window.finishTestUpdateDownload=()=>{args.onEvent.onmessage({event:'Finished'});resolve(92);};});
+        }
+        if(command==='plugin:updater|install'){window.testUpdateInstalls=(window.testUpdateInstalls??0)+1;return;}
+        if(command==='plugin:process|restart'){window.testUpdateRestarts=(window.testUpdateRestarts??0)+1;return;}
+        if(command==='plugin:resources|close'){window.testUpdateCloses=(window.testUpdateCloses??0)+1;return;}
         if(command==='library_list')return{root:'/Users/test/Documents/TanaStudio/Library',assets:[...window.testLibrary.values()],skipped:0};
         if(command==='library_catalog'){
           window.testCatalogCalls.push(args);
@@ -308,6 +319,25 @@ try {
   await editor.locator('#model-size-reset').click();assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1);
   await editor.locator('#undo').click();await editor.locator('#undo').click();await editor.locator('#undo').click();
   await editor.locator('#undo').click();assert.equal(await editor.evaluate(()=>JSON.stringify(window.__scene.environment)),previousSet);
+  const updater=page.getByRole('complementary',{name:'Studio update'});
+  await updater.waitFor();
+  await page.evaluate(()=>{window.failTestUpdateDownload=true;});
+  await updater.getByRole('button',{name:'Download update',exact:true}).click();
+  await updater.getByRole('alert').waitFor();
+  assert.equal(await updater.getByRole('button',{name:'Restart & update'}).count(),0,'Rejected signatures cannot proceed to installation');
+  await updater.getByRole('button',{name:'Download update',exact:true}).click();
+  await page.waitForFunction(()=>!!window.finishTestUpdateDownload);
+  assert.equal(await updater.locator('progress').getAttribute('value'),'25');
+  assert.equal(await updater.getByRole('button',{name:'Dismiss update'}).isDisabled(),true);
+  await page.evaluate(()=>window.finishTestUpdateDownload());
+  await updater.getByRole('button',{name:'Restart & update'}).click();
+  assert.equal(await page.evaluate(()=>window.testUpdateInstalls??0),0,'Restart requires a separate confirmation');
+  await updater.getByRole('button',{name:'Keep editing'}).click();
+  assert.equal(await page.evaluate(()=>window.testUpdateRestarts??0),0);
+  await updater.getByRole('button',{name:'Restart & update'}).click();
+  await updater.getByRole('button',{name:'Restart now'}).click();
+  await page.waitForFunction(()=>window.testUpdateRestarts===1);
+  assert.equal(await page.evaluate(()=>window.testUpdateInstalls),1);
   await mkdir('.tmp', { recursive: true });
   await page.screenshot({ path: '.tmp/studio-desktop.png' });
   await page.setViewportSize({ width: 1100, height: 720 });
