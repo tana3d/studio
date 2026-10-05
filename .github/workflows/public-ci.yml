@@ -20,7 +20,7 @@ jobs:
       NEXT_TELEMETRY_DISABLED: 1
     steps:
       - name: Linux build dependencies
-        run: sudo -n apt-get update && sudo -n apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo -n apt-get update && sudo -n apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgl1 libegl1 libxi6 libxfixes3 libxrender1 libxxf86vm1 libxkbcommon0 libsm6
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -41,6 +41,8 @@ jobs:
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
+      - run: npm run prepare:converter
+      - run: npm run test:converter
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
