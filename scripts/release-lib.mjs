@@ -38,6 +38,11 @@ export async function describeFile(file,identity,platform=null) {
   const key=`releases/${identity.buildId}/${name}`;
   return {platform,label:platform?platforms[platform].label:name,key,url:`https://tana.gg/downloads/${key}`,bytes,sha256:await digest(file),filename:name};
 }
+export function selectInstaller(paths,identity,platform) {
+  const matches=paths.filter(path=>basename(path).toLowerCase().startsWith(`Studio_${identity.version}_`.toLowerCase())&&path.toLowerCase().endsWith(platforms[platform].extension.toLowerCase()));
+  if(matches.length!==1)throw Error(`Expected exactly one ${platform} installer for ${identity.version}, found ${matches.length}.`);
+  return matches[0];
+}
 export async function assembleRelease(directory,identity) {
   const paths=await walk(directory),files=[],sources=[];
   for(const [platform,spec]of Object.entries(platforms)) {

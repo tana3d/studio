@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseIdentity, platforms, describeFile, assembleRelease, publishRelease } from '../scripts/release-lib.mjs';
+import { releaseIdentity, platforms, describeFile, selectInstaller, assembleRelease, publishRelease } from '../scripts/release-lib.mjs';
 const identity=releaseIdentity({GITHUB_RUN_NUMBER:'23',GITHUB_RUN_ATTEMPT:'2',GITHUB_SHA:'a'.repeat(40),STUDIO_BASE_VERSION:'0.1.0'});
 test('each run and retry has an independent versioned release identity',()=>{
   assert.equal(identity.version,'0.1.23');assert.equal(identity.buildId,'23-2-aaaaaaaaaaaa');
   assert.throws(()=>releaseIdentity({GITHUB_RUN_NUMBER:'../../bad'}));
+});
+test('installer collection ignores old cached versions and unfinished disk images',()=>{
+ const valid='/bundle/dmg/Studio_0.1.23_x64.dmg';
+ assert.equal(selectInstaller(['/bundle/dmg/Studio_0.1.22_x64.dmg','/bundle/dmg/rw.123.Studio_0.1.23_x64.dmg',valid],identity,'darwin-x64'),valid);
+ assert.throws(()=>selectInstaller([valid,valid],identity,'darwin-x64'),/exactly one/);
 });
 async function fixture() {
   const directory=await mkdtemp(join(tmpdir(),'studio-release-'));

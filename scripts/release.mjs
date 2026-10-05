@@ -2,7 +2,7 @@ import { mkdir, writeFile, readFile, copyFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { releaseIdentity, platforms, walk, describeFile, assembleRelease, publishRelease } from './release-lib.mjs';
+import { releaseIdentity, platforms, walk, describeFile, selectInstaller, assembleRelease, publishRelease } from './release-lib.mjs';
 
 const root=resolve(import.meta.dirname,'..'),command=process.argv[2];
 const config=JSON.parse(await readFile(join(root,'src-tauri/tauri.conf.json'),'utf8'));
@@ -17,10 +17,10 @@ if(command==='configure') {
 } else if(command==='collect') {
   const platform=process.env.RELEASE_PLATFORM,spec=platforms[platform];
   if(!spec)throw Error('Unsupported release platform.');
-  const matches=(await walk(join(root,'.target/release/bundle'))).filter(path=>path.endsWith(spec.extension));
-  if(matches.length!==1)throw Error(`Expected exactly one ${platform} installer, found ${matches.length}.`);
-  const file=await describeFile(matches[0],identity,platform);
-  await copyFile(matches[0],join(output,file.filename));
+  const directory=platform.startsWith('darwin')?'dmg':platform.startsWith('win32')?'nsis':'appimage';
+  const installer=selectInstaller(await walk(join(root,'.target/release/bundle',directory)),identity,platform);
+  const file=await describeFile(installer,identity,platform);
+  await copyFile(installer,join(output,file.filename));
   await writeFile(join(output,`${platform}.json`),JSON.stringify({...identity,file},null,2));
   console.log(`Prepared ${platform}: ${file.bytes} bytes, SHA-256 ${file.sha256}`);
 } else if(command==='publish'||command==='assemble') {

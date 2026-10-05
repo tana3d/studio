@@ -11,6 +11,8 @@ The workflow checks the converter, Rust tests and installer integrity. Published
 macOS apps must have a Developer ID signature and a stapled Apple notarization
 ticket. Windows uses an NSIS installer; Linux uses AppImage.
 macOS requires version 11 or newer, matching the bundled converter's minimum.
+Windows installers are currently unsigned; no Windows signing certificate is
+configured. Linux builds use the Ubuntu 24.04 runner.
 
 All four installers and corresponding source archives must succeed. The publisher
 checks artifact SHA-256 values, uploads to the private `tana-studio-releases` R2
