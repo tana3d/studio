@@ -1,9 +1,10 @@
 # Studio distribution
 
 Pushing a stable version tag such as `v0.1.0` runs **Studio distribution** on
-GitHub-hosted runners for Apple Silicon, Intel Mac, Windows x64 and Linux x64.
-Normal branch pushes and pull requests run Public CI without releasing. No
-publishing agent or build runs on a user's computer. A manual run must select an
+the `studio-releases` self-hosted runner group. Bugsy builds Apple Silicon and
+Intel Mac targets; Demon builds Linux x64 and handles validation/publication.
+Windows releases are deferred until a Windows machine is available.
+Normal branch pushes and pull requests run Public CI without releasing. The iMac is not registered for Studio. A manual run must select an
 existing version tag; **publish=false** builds test installers without importing
 signing credentials and never publishes them.
 
@@ -16,12 +17,13 @@ tags are supported. The tag must point to a commit on main; later commits on mai
 do not invalidate it. The complete pinned Python/Blender converter is bundled.
 The workflow checks the converter, Rust tests and installer integrity. Published
 macOS apps must have a Developer ID signature and a stapled Apple notarization
-ticket. Windows uses an NSIS installer; Linux uses AppImage.
+ticket. Linux uses AppImage.
 macOS requires version 11 or newer, matching the bundled converter's minimum.
-Windows installers are currently unsigned; no Windows signing certificate is
-configured. Linux builds use the Ubuntu 24.04 runner.
+Intel builds on Bugsy require Rosetta and the x86_64 Rust target; their Python
+and Blender binaries are Intel too. Linux bundles use an Ubuntu 24.04 container
+on Demon to avoid raising the distribution baseline to its host OS.
 
-All four installers, signed updater payloads and corresponding source archives must succeed. The publisher
+All three installers, signed updater payloads and corresponding source archives must succeed. The publisher
 checks artifact SHA-256 values, uploads to the private `tana-studio-releases` R2
 bucket, and streams every object back to verify its bytes. It writes
 `releases/<build-id>/manifest.json` before conditionally updating `latest.json`.
@@ -53,7 +55,8 @@ for this bucket only), `APPLE_CERTIFICATE` (base64 Developer ID .p12),
 and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The updater key is separate from the
 Apple certificate and never ships in the app. Apple ID plus an app-specific
 password remains an optional fallback; never use the normal Apple password. Apple team ID is `6LV9UQMTRU`. Certificates are imported
-into temporary runner keychains, deleted after the macOS job. No secrets are
+into temporary job keychains, deleted after the macOS job. Existing host keychains
+remain in the search list; cleanup removes only the job’s own keychain. No secrets are
 available to Public CI, which runs on pushes and pull requests without selecting
 the release environment. The release workflow runs on version-tag pushes and can
 also be dispatched manually against an existing version tag. Only its publishing
@@ -75,8 +78,10 @@ Before the first public release, configure Apple secrets and run the workflow
 with publication enabled. A passing dry run proves packaging but does not prove
 Apple notarization or R2 publication. Release history and logs are at
 https://github.com/tana3d/studio/actions/workflows/release.yml.
-GitHub-hosted builds also require the organization/account to be in good billing
-standing; a billing lock prevents jobs from starting, even before checkout.
+Trusted main checks and releases use the self-hosted machines. Pull-request
+checks stay on GitHub-hosted runners so untrusted fork code cannot execute on
+persistent personal machines. Those PR jobs may remain blocked by GitHub’s account
+billing lock; the self-hosted release does not share that blocker.
 
 Rollback: use an already verified version manifest to replace `latest.json` with
 a conditional R2 write. Do not delete installer objects referenced by a published
@@ -94,12 +99,13 @@ The separate catalog window cannot invoke updater or restart commands.
 The website serves 204 when there is no newer compatible release, and 200 with
 Tauri's version, date, notes, download URL and signature otherwise. It reads the
 same atomic `latest.json` as the website button. macOS uses a signed `.app.tar.gz`;
-Windows and Linux reuse the signed NSIS/AppImage installer. The release pipeline
+Linux reuses the signed AppImage installer. Windows compatibility remains in
+the website feed for future releases, but no Windows payload is published now. The release pipeline
 verifies Minisign signatures and the version in their trusted comment before
 publication; clients also require this signed version to match the update feed.
 All update downloads use immutable version URLs and support resumable ranges.
 
-The first updater-enabled version is 0.2.0. Older copies without the updater
+The first updater-enabled version is 0.2.1. Older copies without the updater
 must be replaced by downloading that version from the website. Future releases
 use the same signing key and appear automatically. Back up the encrypted private
 key and its password securely; losing this key prevents updates to existing apps.

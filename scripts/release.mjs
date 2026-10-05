@@ -21,10 +21,11 @@ if(command==='validate') {
   const platform=process.env.RELEASE_PLATFORM,spec=platforms[platform];
   if(!spec)throw Error('Unsupported release platform.');
   const directory=platform.startsWith('darwin')?'dmg':platform.startsWith('win32')?'nsis':'appimage';
-  const installer=selectInstaller(await walk(join(root,'.target/release/bundle',directory)),identity,platform);
+  const bundleRoot=join(process.env.CARGO_TARGET_DIR??join(root,'.target'),...(process.env.RELEASE_TARGET?[process.env.RELEASE_TARGET]:[]),'release/bundle');
+  const installer=selectInstaller(await walk(join(bundleRoot,directory)),identity,platform);
   const file=await describeFile(installer,identity,platform);
   await copyFile(installer,join(output,file.filename));
-  const updatePath=platform.startsWith('darwin')?join(root,'.target/release/bundle/macos/Studio.app.tar.gz'):installer;
+  const updatePath=platform.startsWith('darwin')?join(bundleRoot,'macos/Studio.app.tar.gz'):installer;
   const signature=(await readFile(`${updatePath}.sig`,'utf8')).trim();
   const update=await describeUpdate(updatePath,signature,identity,platform,config.plugins.updater.pubkey);
   if(update.filename!==file.filename)await copyFile(updatePath,join(output,update.filename));

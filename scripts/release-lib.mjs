@@ -6,7 +6,6 @@ import { join, basename } from 'node:path';
 export const platforms = {
   'darwin-arm64': {label:'macOS Apple Silicon',extension:'.dmg',target:'darwin-aarch64'},
   'darwin-x64': {label:'macOS Intel',extension:'.dmg',target:'darwin-x86_64'},
-  'win32-x64': {label:'Windows',extension:'.exe',target:'windows-x86_64'},
   'linux-x64': {label:'Linux',extension:'.AppImage',target:'linux-x86_64'},
 };
 export async function digest(file) {

@@ -1,6 +1,7 @@
 name: Public CI
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -10,14 +11,19 @@ concurrency:
   cancel-in-progress: true
 jobs:
   check:
-    runs-on: macos-15
+    if: github.repository == 'tana3d/studio'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || fromJSON('{"group":"studio-releases","labels":["self-hosted","studio","demon"]}') }}
     timeout-minutes: 30
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.target
       CARGO_BUILD_JOBS: 2
       NEXT_TELEMETRY_DISABLED: 1
     steps:
+      - name: Linux build dependencies
+        run: sudo -n apt-get update && sudo -n apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 26
@@ -33,7 +39,7 @@ jobs:
       - run: npm run build
       - run: npm run check
       - run: npm test
-      - run: npx playwright install chromium
+      - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml

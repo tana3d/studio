@@ -21,7 +21,10 @@ const platforms={
 const aliases=Object.fromEntries(Object.entries(platforms).map(([key,[triple]])=>[triple,key]));
 const platform=aliases[target]??target, spec=platforms[platform];
 if(!spec)throw new Error(`No prebuilt Blender converter is available for ${target}.`);
-if(platform!==`${process.platform}-${process.arch}`)throw new Error('Prepare the converter on the release target host; cross-platform pip installation is not supported.');
+const rosettaIntel=process.platform==='darwin'&&process.arch==='arm64'&&platform==='darwin-x64';
+if(platform!==`${process.platform}-${process.arch}`&&!rosettaIntel)throw new Error('Prepare the converter on the release target host; cross-platform pip installation is not supported.');
+// Intel Python and bpy execute under Rosetta; every bundled binary remains Intel.
+if(rosettaIntel)await new Promise((accept,reject)=>{const child=spawn('/usr/bin/arch',['-x86_64','/usr/bin/true']);child.on('error',reject);child.on('exit',code=>code===0?accept():reject(Error('Install Rosetta on the Apple Silicon build host before producing Intel releases.')));});
 const version='4.5.14',release='20261003';
 const destination=join(root,'src-tauri/converter/runtime');
 const cached=await readFile(join(destination,'studio-runtime.json'),'utf8').then(JSON.parse).catch(()=>null);

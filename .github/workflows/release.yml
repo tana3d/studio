@@ -22,7 +22,9 @@ env:
 jobs:
   validate:
     if: github.repository == 'tana3d/studio' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: studio-releases
+      labels: [self-hosted, studio, demon]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -54,24 +56,36 @@ jobs:
       matrix:
         include:
           - platform: darwin-arm64
-            runner: macos-15
+            machine: bugsy
+            target: aarch64-apple-darwin
+            container: ''
           - platform: darwin-x64
-            runner: macos-15-intel
-          - platform: win32-x64
-            runner: windows-2025
+            machine: bugsy
+            target: x86_64-apple-darwin
+            container: ''
           - platform: linux-x64
-            runner: ubuntu-24.04
-    runs-on: ${{ matrix.runner }}
+            machine: demon
+            target: x86_64-unknown-linux-gnu
+            container: ubuntu:24.04
+    runs-on:
+      group: studio-releases
+      labels: [self-hosted, studio, '${{ matrix.machine }}']
+    container: ${{ matrix.container }}
     timeout-minutes: 90
     defaults:
       run:
         shell: bash
     env:
       RELEASE_PLATFORM: ${{ matrix.platform }}
+      RELEASE_TARGET: ${{ matrix.target }}
+      BUNDLE_ROOT: ${{ github.workspace }}/.target/${{ matrix.target }}/release/bundle
       CARGO_TARGET_DIR: ${{ github.workspace }}/.target
       CARGO_PROFILE_TEST_DEBUG: '0'
       APPLE_SIGNING_IDENTITY: "${{ (github.event_name == 'push' || inputs.publish == true) && 'Developer ID Application: Sami Fouad (6LV9UQMTRU)' || '-' }}"
     steps:
+      - name: Bootstrap Linux build container
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y curl ca-certificates git build-essential pkg-config xz-utils file
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -82,6 +96,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.0
+          targets: ${{ matrix.target }}
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
@@ -89,7 +104,7 @@ jobs:
           key: release-${{ matrix.platform }}
       - name: Linux build and converter dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgl1 libegl1 libxi6 libxfixes3 libxrender1 libxxf86vm1 libxkbcommon0 libsm6
+        run: apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgl1 libegl1 libxi6 libxfixes3 libxrender1 libxxf86vm1 libxkbcommon0 libsm6
       - name: Prepare Apple signing
         if: runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true'
         env:
@@ -113,14 +128,12 @@ jobs:
           APPLE_API_ISSUER: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_API_ISSUER || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --config .tmp/release-config.json
+        run: npm run tauri -- build --target "$RELEASE_TARGET" --config .tmp/release-config.json
       - run: npm run check
       - name: Verify the bundled Blender converter
         run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            src-tauri/converter/runtime/python.exe -I tests/model-converter.py
-          elif [ "$RUNNER_OS" = macOS ]; then
-            .target/release/bundle/macos/Studio.app/Contents/Resources/converter/runtime/bin/python3 -I tests/model-converter.py
+          if [ "$RUNNER_OS" = macOS ]; then
+            "$BUNDLE_ROOT/macos/Studio.app/Contents/Resources/converter/runtime/bin/python3" -I tests/model-converter.py
           else
             src-tauri/converter/runtime/bin/python3 -I tests/model-converter.py
           fi
@@ -130,9 +143,9 @@ jobs:
       - name: Verify macOS distribution signature and notarization ticket
         if: runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true'
         run: |
-          codesign --verify --deep --strict .target/release/bundle/macos/Studio.app
-          xcrun stapler validate .target/release/bundle/macos/Studio.app
-          spctl --assess --type execute --verbose .target/release/bundle/macos/Studio.app
+          codesign --verify --deep --strict "$BUNDLE_ROOT/macos/Studio.app"
+          xcrun stapler validate "$BUNDLE_ROOT/macos/Studio.app"
+          spctl --assess --type execute --verbose "$BUNDLE_ROOT/macos/Studio.app"
       - run: node scripts/release.mjs collect
       - uses: actions/upload-artifact@v4
         with:
@@ -145,10 +158,16 @@ jobs:
         if: always() && runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true'
         run: node scripts/apple-keychain.mjs cleanup
 
+      - name: Return container files to the runner account
+        if: always() && runner.os == 'Linux'
+        run: chown -R "$(stat -c %u "$GITHUB_WORKSPACE"):$(stat -c %g "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE"
+
   source:
     needs: validate
     if: github.repository == 'tana3d/studio' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: studio-releases
+      labels: [self-hosted, studio, demon]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -176,7 +195,9 @@ jobs:
     permissions:
       contents: write
     environment: release
-    runs-on: ubuntu-24.04
+    runs-on:
+      group: studio-releases
+      labels: [self-hosted, studio, demon]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

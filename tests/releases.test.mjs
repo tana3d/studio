@@ -43,10 +43,10 @@ async function fixture() {
 test('assembly rejects missing platforms, changed payloads and mixed builds',async()=>{
   const directory=await fixture();
   try {
-    const release=await assembleRelease(directory,identity,pubkey);assert.equal(release.files.length,4);assert.equal(release.sources.length,2);assert.equal(release.updates.length,4);
-    await writeFile(join(directory,'Studio-0.1.0-win32-x64.exe'),'corruption');await assert.rejects(assembleRelease(directory,identity,pubkey),/Corrupt/);
-    await rm(join(directory,'win32-x64.json'));await assert.rejects(assembleRelease(directory,identity,pubkey),/Missing/);
-    await writeFile(join(directory,'win32-x64.json'),JSON.stringify({...identity,commit:'b'.repeat(40),file:{platform:'win32-x64'}}));await assert.rejects(assembleRelease(directory,identity,pubkey),/Mixed/);
+    const release=await assembleRelease(directory,identity,pubkey);assert.equal(release.files.length,3);assert.equal(release.sources.length,2);assert.equal(release.updates.length,3);
+    await writeFile(join(directory,'Studio-0.1.0-linux-x64.AppImage'),'corruption');await assert.rejects(assembleRelease(directory,identity,pubkey),/Corrupt/);
+    await rm(join(directory,'linux-x64.json'));await assert.rejects(assembleRelease(directory,identity,pubkey),/Missing/);
+    await writeFile(join(directory,'linux-x64.json'),JSON.stringify({...identity,commit:'b'.repeat(40),file:{platform:'linux-x64'}}));await assert.rejects(assembleRelease(directory,identity,pubkey),/Mixed/);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
 test('publication never changes latest when upload, readback or tag validation fails',async()=>{
@@ -152,7 +152,7 @@ test('publication verifies Mac update bundles and uploads shared installers only
   const release=await assembleRelease(directory,identity,pubkey),calls=[];
   const store={readManifest:async()=>({}),upload:async file=>calls.push(file.key),verify:async file=>file.sha256,writeVersion:async manifest=>{assert.ok(manifest.updates.every(item=>!item.path));},writeLatest:async()=>calls.push('latest')};
   await publishRelease(store,release,async()=>true);
-  assert.equal(new Set(calls).size,9);assert.equal(calls.length,9);assert.equal(calls.at(-1),'latest');
+  assert.equal(new Set(calls).size,8);assert.equal(calls.length,8);assert.equal(calls.at(-1),'latest');
   const metadata=join(directory,'darwin-arm64.json'),record=JSON.parse(await readFile(metadata,'utf8'));delete record.update;
   await writeFile(metadata,JSON.stringify(record));await assert.rejects(assembleRelease(directory,identity,pubkey),/Missing signed/);
  }finally{await rm(directory,{recursive:true,force:true});}

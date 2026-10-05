@@ -1,0 +1,2 @@
+self-hosted-runner:
+  labels: [studio, bugsy, demon, darwin-arm64, darwin-x64, linux-x64]
