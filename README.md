@@ -1,5 +1,10 @@
 # Studio by tana
 
+Pushes to main run the [distribution pipeline](docs/distribution.md): build
+installers on GitHub, sign and notarize macOS, verify uploads in R2, then update
+the downloads at https://tana.gg/download. Website deployments remain managed by
+Cloudflare's Git connection.
+
 Build worlds, direct character performances, arrange camera angles, and export your story.
 
 Studio combines a local Three.js scene editor with a ChatGPT conversation in a Tauri desktop app. Chat starts at one quarter of the window. Drag the divider to resize it, or use the drawer icon to collapse and reopen it. Resizing and collapsing keep your scene and conversation intact. The editor is bundled into the app and works without a separate server.
