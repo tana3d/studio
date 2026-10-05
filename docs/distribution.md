@@ -23,6 +23,13 @@ Intel builds on Bugsy require Rosetta and the x86_64 Rust target; their Python
 and Blender binaries are Intel too. Linux bundles use an Ubuntu 24.04 container
 on Demon to avoid raising the distribution baseline to its host OS.
 
+Build jobs transfer installers and source archives through private R2
+`staging/<build-id>/` objects, rather than GitHub Actions artifact storage.
+Staging objects expire after seven days; published downloads are retained.
+The publisher validates each group's run identity and SHA-256 before assembly.
+When retrying an unpublished failed run, choose **Re-run all jobs** so every
+platform uses the same attempt identity.
+
 All three installers, signed updater payloads and corresponding source archives must succeed. The publisher
 checks artifact SHA-256 values, uploads to the private `tana-studio-releases` R2
 bucket, and streams every object back to verify its bytes. It writes
@@ -46,6 +53,16 @@ streams listed files, supports resumable downloads and retains old release links
 The website continues to deploy through Cloudflare's Git connection. Studio's
 workflow uploads release objects only; it never deploys the website.
 
+Rust compilation uses sccache 0.18.0 backed by three private buckets:
+`tana-studio-sccache-darwin-arm64`, `tana-studio-sccache-darwin-x64`, and
+`tana-studio-sccache-linux-x64`. Public CI and release share a dedicated
+cache-only credential (`R2_SCCACHE_ACCESS_KEY_ID`, `R2_SCCACHE_SECRET_ACCESS_KEY`).
+Its object read/write policy covers only these three buckets; it cannot access
+release downloads or other projects. Each job uses a separate sccache server
+port, stops its own server on exit, and reports cache statistics. Trusted checks
+fail if the remote cache configuration is absent or inaccessible. Fork PRs use
+local sccache on a disposable hosted runner without credentials.
+
 Repository variables: `R2_ACCOUNT_ID`, `R2_BUCKET`.
 The `release` environment permits only tags matching `v*.*.*`. Its encrypted secrets
 are `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (object read/write
@@ -56,9 +73,10 @@ and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The updater key is separate from the
 Apple certificate and never ships in the app. Apple ID plus an app-specific
 password remains an optional fallback; never use the normal Apple password. Apple team ID is `6LV9UQMTRU`. Certificates are imported
 into temporary job keychains, deleted after the macOS job. Existing host keychains
-remain in the search list; cleanup removes only the job’s own keychain. No secrets are
-available to Public CI, which runs on pushes and pull requests without selecting
-the release environment. The release workflow runs on version-tag pushes and can
+remain in the search list; cleanup removes only the job’s own keychain. The `public-ci` environment holds only the cache-only pair. The `release`
+environment holds that same pair plus the separate release-bucket credential
+and signing keys. Release uploads override the cache credential only in their
+upload steps; compilation never uses the release key. The release workflow runs on version-tag pushes and can
 also be dispatched manually against an existing version tag. Only its publishing
 job has repository write permission, to create the GitHub release record.
 

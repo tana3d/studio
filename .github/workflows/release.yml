@@ -18,6 +18,8 @@ env:
   NEXT_TELEMETRY_DISABLED: '1'
   CARGO_INCREMENTAL: '0'
   CARGO_BUILD_JOBS: '2'
+  R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+  R2_BUCKET: ${{ vars.R2_BUCKET }}
 
 jobs:
   validate:
@@ -33,7 +35,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          cache: npm
       - run: npm ci --no-audit --no-fund
       - name: Validate version tag and main ancestry
         env:
@@ -59,14 +60,17 @@ jobs:
             machine: bugsy
             target: aarch64-apple-darwin
             container: ''
+            cache_port: '42371'
           - platform: darwin-x64
             machine: bugsy
             target: x86_64-apple-darwin
             container: ''
+            cache_port: '42372'
           - platform: linux-x64
             machine: demon
             target: x86_64-unknown-linux-gnu
             container: ubuntu:24.04
+            cache_port: '42373'
     runs-on:
       group: studio-releases
       labels: [self-hosted, studio, '${{ matrix.machine }}']
@@ -78,8 +82,14 @@ jobs:
     env:
       RELEASE_PLATFORM: ${{ matrix.platform }}
       RELEASE_TARGET: ${{ matrix.target }}
-      BUNDLE_ROOT: ${{ github.workspace }}/.target/${{ matrix.target }}/release/bundle
-      CARGO_TARGET_DIR: ${{ github.workspace }}/.target
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      RUSTC_WRAPPER: sccache
+      SCCACHE_SERVER_PORT: ${{ matrix.cache_port }}
+      SCCACHE_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      SCCACHE_REGION: auto
+      SCCACHE_BUCKET: tana-studio-sccache-${{ matrix.platform }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SCCACHE_SECRET_ACCESS_KEY }}
       CARGO_PROFILE_TEST_DEBUG: '0'
       APPLE_SIGNING_IDENTITY: "${{ (github.event_name == 'push' || inputs.publish == true) && 'Developer ID Application: Sami Fouad (6LV9UQMTRU)' || '-' }}"
     steps:
@@ -92,16 +102,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          cache: npm
+      - name: Use the runner's local build cache
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TOOL_CACHE/studio-target/$RELEASE_PLATFORM" >> "$GITHUB_ENV"
+          echo "BUNDLE_ROOT=$RUNNER_TOOL_CACHE/studio-target/$RELEASE_PLATFORM/$RELEASE_TARGET/release/bundle" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.0
           targets: ${{ matrix.target }}
           components: clippy,rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> ../.target
-          key: release-${{ matrix.platform }}
       - name: Linux build and converter dependencies
         if: runner.os == 'Linux'
         run: apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgl1 libegl1 libxi6 libxfixes3 libxrender1 libxxf86vm1 libxkbcommon0 libsm6
@@ -117,6 +126,16 @@ jobs:
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: node scripts/apple-keychain.mjs
       - run: npm ci --no-audit --no-fund
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.18.0
+          disable_annotations: true
+      - name: Require the cache-only R2 credential
+        run: node scripts/check-rust-cache.mjs
+      - name: Start this job's isolated compiler cache server
+        run: |
+          sccache --stop-server || true
+          sccache --start-server
       - run: npm test
       - run: node scripts/release.mjs configure
       - name: Build installer (sign and notarize macOS for publication)
@@ -134,7 +153,7 @@ jobs:
           if [ "$RUNNER_OS" != macOS ] || [ "$RELEASE_PUBLISH" != true ]; then
             unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
           fi
-          npm run tauri -- build --target "$RELEASE_TARGET" --config .tmp/release-config.json
+          npm run tauri -- build --verbose --target "$RELEASE_TARGET" --config .tmp/release-config.json
       - run: npm run check
       - name: Verify the bundled Blender converter
         run: |
@@ -153,23 +172,28 @@ jobs:
           xcrun stapler validate "$BUNDLE_ROOT/macos/Studio.app"
           spctl --assess --type execute --verbose "$BUNDLE_ROOT/macos/Studio.app"
       - run: node scripts/release.mjs collect
-      - uses: actions/upload-artifact@v4
-        with:
-          name: installer-${{ matrix.platform }}
-          path: .tmp/release/
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
+      - name: Transfer signed installers to R2 staging
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/release-transfer.mjs upload installer-${{ matrix.platform }} .tmp/release
+      - name: Compiler cache statistics
+        if: always()
+        run: sccache --show-stats
+      - name: Stop this job's compiler cache server
+        if: always()
+        run: sccache --stop-server
       - name: Remove temporary signing keychain
         if: always() && runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true'
         run: node scripts/apple-keychain.mjs cleanup
 
       - name: Return container files to the runner account
         if: always() && runner.os == 'Linux'
-        run: chown -R "$(stat -c %u "$GITHUB_WORKSPACE"):$(stat -c %g "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE"
+        run: chown -R "$(stat -c %u "$GITHUB_WORKSPACE"):$(stat -c %g "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE" "$CARGO_TARGET_DIR"
 
   source:
     needs: validate
+    environment: release
     if: github.repository == 'tana3d/studio' && startsWith(github.ref, 'refs/tags/v')
     runs-on:
       group: studio-releases
@@ -185,13 +209,15 @@ jobs:
           git archive --format=tar.gz HEAD > .tmp/source/studio-source.tar.gz
           curl --fail --location --retry 3 https://download.blender.org/source/blender-4.5.14.tar.xz -o .tmp/source/blender-4.5.14.tar.xz
           xz --test .tmp/source/blender-4.5.14.tar.xz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v4
         with:
-          name: corresponding-source
-          path: .tmp/source/
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
+          node-version: 26
+      - run: npm ci --no-audit --no-fund
+      - name: Transfer corresponding source to R2 staging
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/release-transfer.mjs upload corresponding-source .tmp/source
 
   publish:
     needs: [bundle, source]
@@ -212,11 +238,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          cache: npm
       - run: npm ci --no-audit --no-fund
-      - uses: actions/download-artifact@v4
-        with:
-          path: .tmp/artifacts
+      - name: Retrieve release files from R2 and verify checksums
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/release-transfer.mjs download .tmp/artifacts
       - name: Check every installer and source archive
         run: node scripts/release.mjs assemble .tmp/artifacts
       - name: Upload installers, verify R2 readback, then update the website manifest
@@ -228,11 +255,6 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: node scripts/release.mjs publish .tmp/artifacts
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-manifest
-          path: .tmp/release/manifest.json
-          retention-days: 7
       - name: Publish release notes and download links
         if: env.RELEASE_PUBLISH == 'true'
         env:

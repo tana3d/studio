@@ -13,10 +13,20 @@ jobs:
   check:
     if: github.repository == 'tana3d/studio'
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || fromJSON('{"group":"studio-releases","labels":["self-hosted","studio","demon"]}') }}
+    environment: public-ci
     timeout-minutes: 30
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.target
       CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: '0'
+      RUSTC_WRAPPER: sccache
+      SCCACHE_SERVER_PORT: '42374'
+      SCCACHE_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      SCCACHE_REGION: auto
+      # Fork PRs have no secrets and use a local cache on a disposable hosted runner.
+      SCCACHE_BUCKET: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'tana-studio-sccache-linux-x64' || '' }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SCCACHE_SECRET_ACCESS_KEY }}
       NEXT_TELEMETRY_DISABLED: 1
     steps:
       - name: Linux build dependencies
@@ -27,15 +37,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-          cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.96.0
           components: clippy,rustfmt
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> ../.target
       - run: npm ci
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.18.0
+          disable_annotations: true
+      - name: Require the cache-only R2 credential for trusted checks
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: node scripts/check-rust-cache.mjs
+      - name: Start this job's isolated compiler cache server
+        run: |
+          sccache --stop-server || true
+          sccache --start-server
       - run: npm run build
       - run: npm run check
       - run: npm test
@@ -46,3 +63,9 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Compiler cache statistics
+        if: always()
+        run: sccache --show-stats
+      - name: Stop this job's compiler cache server
+        if: always()
+        run: sccache --stop-server
