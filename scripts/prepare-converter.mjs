@@ -57,8 +57,8 @@ if(!wheel)throw new Error('The Blender package is unavailable for this platform.
 const wheelFile=join(downloads,wheel.filename);await download(wheel.url,wheelFile,wheel.digests.sha256);
 const executable=join(staging,platform.startsWith('win32')?'python.exe':'bin/python3');
 const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('PYTHON')||key.startsWith('PIP'))delete env[key];
-await run(executable,['-I','-m','pip','install','--disable-pip-version-check','--only-binary=:all:','--no-compile',wheelFile],env);
-await run(executable,['-I','-c',"import bpy; assert hasattr(bpy.ops.export_scene, 'gltf'); print('Blender converter:', bpy.app.version_string)"],env);
+await run(executable,['-I','-B','-m','pip','install','--disable-pip-version-check','--only-binary=:all:','--no-compile',wheelFile],env);
+await run(executable,['-I','-B','-c',"import bpy; assert hasattr(bpy.ops.export_scene, 'gltf'); print('Blender converter:', bpy.app.version_string)"],env);
 await writeFile(join(staging,'studio-runtime.json'),JSON.stringify({schema:1,platform,bpy:version,release,python:python.name,pythonSha256:pythonHash,bpySha256:wheel.digests.sha256,source:`https://download.blender.org/source/blender-${version}.tar.xz`},null,2));
 await rm(destination,{recursive:true,force:true});
 const {rename}=await import('node:fs/promises');await rename(staging,destination);

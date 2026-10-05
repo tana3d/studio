@@ -208,7 +208,7 @@ fn convert(
     let stderr = stdout.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new(python);
     command
-        .args(["-I"])
+        .args(["-I", "-B"])
         .arg(script)
         .arg(source)
         .arg(&output)

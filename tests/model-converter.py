@@ -7,9 +7,15 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+
+def bytecode_state():
+    return {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in Path(sys.prefix).rglob("*.pyc")}
+
+bytecode_before = bytecode_state()
 import bpy
 
 root = Path(__file__).resolve().parent.parent
+converter = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else root / "src-tauri/converter/convert.py"
 fixtures = root / ".tmp/converter-fixtures"
 fixtures.mkdir(parents=True, exist_ok=True)
 (fixtures / "textures").mkdir(exist_ok=True)
@@ -56,7 +62,7 @@ for filename in ["textured.blend", "animated.fbx", "prop.obj", "prop.stl", "prop
     target.mkdir(exist_ok=True)
     started = time.monotonic()
     with (target / "log.txt").open("wb") as log:
-        subprocess.run([sys.executable, "-I", str(root / "src-tauri/converter/convert.py"), str(fixtures / filename), str(target / "model.glb"), str(target / "result.json")], stdout=log, stderr=log, check=True, timeout=120)
+        subprocess.run([sys.executable, "-I", "-B", str(converter), str(fixtures / filename), str(target / "model.glb"), str(target / "result.json")], stdout=log, stderr=log, check=True, timeout=120)
     result = json.loads((target / "result.json").read_text())
     assert result["ok"], result
     raw = (target / "model.glb").read_bytes()
@@ -74,9 +80,10 @@ assert hashlib.sha256((fixtures / "textured.blend").read_bytes()).hexdigest() ==
 try:
     failed = fixtures / "missing.json"
     with (fixtures / "missing.log").open("wb") as log:
-        process = subprocess.run([sys.executable, "-I", str(root / "src-tauri/converter/convert.py"), str(fixtures / "textured.blend"), str(fixtures / "missing.glb"), str(failed)], stdout=log, stderr=log, timeout=120)
+        process = subprocess.run([sys.executable, "-I", "-B", str(converter), str(fixtures / "textured.blend"), str(fixtures / "missing.glb"), str(failed)], stdout=log, stderr=log, timeout=120)
     assert process.returncode != 0
     assert "texture is missing" in json.loads(failed.read_text())["error"]
 finally:
     (fixtures / "textures/hidden.png").rename(fixtures / "textures/colour.png")
-print(json.dumps({"ok": True, "formats": results, "originalUntouched": True, "embeddedScriptsDisabled": True, "missingTexturesRejected": True}, indent=2))
+assert bytecode_state() == bytecode_before, "Conversion must not modify the signed runtime"
+print(json.dumps({"ok": True, "formats": results, "originalUntouched": True, "embeddedScriptsDisabled": True, "missingTexturesRejected": True, "runtimeUnchanged": True}, indent=2))

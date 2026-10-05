@@ -17,7 +17,13 @@ tags are supported. The tag must point to a commit on main; later commits on mai
 do not invalidate it. The complete pinned Python/Blender converter is bundled.
 The workflow checks the converter, Rust tests and installer integrity. Published
 macOS apps must have a Developer ID signature and a stapled Apple notarization
-ticket. Linux uses AppImage.
+ticket. Linux uses AppImage, and its converter tests run with Python extracted
+from the completed installer. Packaging excludes Blender's optional host AMD
+HIP, Intel Level Zero and NVIDIA CUDA driver dependencies, plus optional
+MaterialX render backends absent from the upstream wheel; CPU model conversion retains
+materials and animations. Conversion disables Python bytecode writes to keep
+the signed runtime unchanged. The release's Rust tests and lint use its explicit
+platform target and release profile, including Intel tests under Rosetta.
 macOS requires version 11 or newer, matching the bundled converter's minimum.
 Intel builds on Bugsy require Rosetta and the x86_64 Rust target; their Python
 and Blender binaries are Intel too. Linux bundles use an Ubuntu 24.04 container
@@ -123,8 +129,8 @@ verifies Minisign signatures and the version in their trusted comment before
 publication; clients also require this signed version to match the update feed.
 All update downloads use immutable version URLs and support resumable ranges.
 
-The first updater-enabled version is 0.2.2. Older copies without the updater
-must be replaced by downloading that version from the website. Future releases
+The updater was introduced in 0.2.2. Older copies without it must be replaced
+by downloading the current version from the website. Future releases
 use the same signing key and appear automatically. Back up the encrypted private
 key and its password securely; losing this key prevents updates to existing apps.
 A key change requires an intentionally planned transition, not regeneration.

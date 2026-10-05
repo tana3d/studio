@@ -113,7 +113,7 @@ jobs:
           components: clippy,rustfmt
       - name: Linux build and converter dependencies
         if: runner.os == 'Linux'
-        run: apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgl1 libegl1 libxi6 libxfixes3 libxrender1 libxxf86vm1 libxkbcommon0 libsm6
+        run: apt-get update && apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libgl1 libegl1 libxi6 libxfixes3 libxrender1 libxxf86vm1 libxkbcommon0 libsm6 libxt6
       - name: Prepare Apple signing
         if: runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true'
         env:
@@ -158,13 +158,20 @@ jobs:
       - name: Verify the bundled Blender converter
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
-            "$BUNDLE_ROOT/macos/Studio.app/Contents/Resources/converter/runtime/bin/python3" -I tests/model-converter.py
+            "$BUNDLE_ROOT/macos/Studio.app/Contents/Resources/converter/runtime/bin/python3" -I -B tests/model-converter.py "$BUNDLE_ROOT/macos/Studio.app/Contents/Resources/converter/convert.py"
           else
-            src-tauri/converter/runtime/bin/python3 -I tests/model-converter.py
+            mkdir -p .tmp/appimage-verification
+            installer=$(find "$BUNDLE_ROOT/appimage" -maxdepth 1 -name "Studio_*.AppImage" -type f)
+            test "$(printf '%s\n' "$installer" | wc -l)" -eq 1
+            (cd .tmp/appimage-verification && "$installer" --appimage-extract >/dev/null)
+            python=$(find .tmp/appimage-verification/squashfs-root -path '*/converter/runtime/bin/python3')
+            test -x "$python"
+            test "$(printf '%s\n' "$python" | wc -l)" -eq 1
+            "$python" -I -B tests/model-converter.py "${python%/runtime/bin/python3}/convert.py"
           fi
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
-      - run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - run: cargo test --locked --release --target "$RELEASE_TARGET" --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --locked --release --target "$RELEASE_TARGET" --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
       - name: Verify macOS distribution signature and notarization ticket
         if: runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true'
         run: |

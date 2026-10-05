@@ -19,7 +19,7 @@
     "test:ui": "node tests/studio-ui.mjs",
     "tauri": "node scripts/tauri.mjs",
     "prepare:converter": "node scripts/prepare-converter.mjs",
-    "test:converter": "src-tauri/converter/runtime/bin/python3 -I tests/model-converter.py"
+    "test:converter": "src-tauri/converter/runtime/bin/python3 -I -B tests/model-converter.py"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.3.0",
