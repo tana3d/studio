@@ -18,7 +18,7 @@ else {
     const privateKey=createPrivateKey(process.env.APPLE_API_PRIVATE_KEY);
     if(privateKey.asymmetricKeyType!=='ec'||privateKey.asymmetricKeyDetails?.namedCurve!=='prime256v1')throw Error('Invalid Apple notarization private key.');
     writeFileSync(apiKeyFile,process.env.APPLE_API_PRIVATE_KEY,{mode:0o600});
-    appendFileSync(process.env.GITHUB_ENV,`APPLE_API_KEY_PATH=${apiKeyFile}\n`);
+    appendFileSync(process.env.GITHUB_ENV,`APPLE_API_KEY_PATH=${apiKeyFile}\nAPPLE_KEYCHAIN_PATH=${keychain}\n`);
   } else if(!process.env.APPLE_ID||!process.env.APPLE_PASSWORD)throw Error('Configure Apple API notarization credentials before publishing macOS installers.');
   const file=join(directory,'studio-signing.p12'),password=randomBytes(32).toString('hex');
   writeFileSync(file,Buffer.from(process.env.APPLE_CERTIFICATE,'base64'),{mode:0o600});

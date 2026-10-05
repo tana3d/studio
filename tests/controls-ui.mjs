@@ -33,16 +33,19 @@ try{
   assert.equal(await editor.locator('#cam-0 .shortcut-badge').textContent(),'2');
   const actor=()=>editor.evaluate(()=>{const a=window.__studio.actors.Vale;return {pos:a.group.position.toArray(),velocity:a.velocity.toArray(),idle:a.layers[a.idle].weight};});
   await editor.evaluate(()=>{const a=window.__studio.actors.Vale;a.group.position.set(0,0,-16);a.velocity.set(0,0);window.__player.yaw=0;});
-  const start=await actor();
   await page.keyboard.down('KeyW');await page.keyboard.down('KeyD');
+  // Start the measurement once both key events have arrived; transport time is not movement precision.
+  const start=await editor.evaluate(()=>{const a=window.__studio.actors.Vale;a.group.position.set(0,0,-16);a.velocity.set(0,0);return {pos:a.group.position.toArray()};});
   await page.waitForTimeout(600);
   const diagonal=await actor();
   assert.ok(diagonal.pos[0]>start.pos[0]+.3&&diagonal.pos[2]<start.pos[2]-.3);
   assert.ok(Math.abs((diagonal.pos[0]-start.pos[0])+(diagonal.pos[2]-start.pos[2]))<.08,'W+D maintains a precise diagonal');
   await page.keyboard.up('KeyW');await page.keyboard.up('KeyD');
+  // Measure braking after input release, excluding browser transport latency.
+  const released=await actor();
   await editor.waitForFunction(()=>window.__studio.actors.Vale.velocity.length()===0);
   await editor.waitForFunction(()=>window.__studio.actors.Vale.layers[window.__studio.actors.Vale.idle].weight>.98);
-  const rest=await actor();assert.ok(Math.hypot(rest.pos[0]-diagonal.pos[0],rest.pos[2]-diagonal.pos[2])<.18,'Stops promptly and blends back to idle');
+  const rest=await actor();assert.ok(Math.hypot(rest.pos[0]-released.pos[0],rest.pos[2]-released.pos[2])<.18,'Stops promptly and blends back to idle');
   const canvas=editor.locator('canvas').first(),box=await canvas.boundingBox();
   const x=box.x+box.width*.5,y=box.y+box.height*.4;
   const yaw=await editor.evaluate(()=>window.__player.yaw);
@@ -85,11 +88,12 @@ try{
   await editor.locator('#record-performance').click();
   await canvas.focus();await page.keyboard.press('Space');
   await editor.waitForFunction(()=>window.__studio.actors.Vale.group.position.y>.4);
+  const airborneTime=await editor.evaluate(()=>window.__studio.timeline.time);
   await editor.locator('#record-performance').click();
   assert.equal(await editor.evaluate(()=>window.__studio.actors.Vale.jumpState),null,'Stopping a take clears live jump physics');
   await editor.locator('#rewind').click();
   const floor=(await actor()).pos[1];
-  await editor.evaluate(()=>window.__studio.timeline.seek(.2));
+  await editor.evaluate(time=>window.__studio.timeline.seek(time),airborneTime);
   assert.ok((await actor()).pos[1]>floor+.2,'A recorded jump replays from its timeline samples');
   assert.deepEqual(errors,[]);
   console.log('Passed: chat/editor shortcuts, number hints, precise diagonals, stopping/idle, mouse-only look, jump/landing, supported and unsupported crouch, capture fallback, fixed-camera zoom undo/redo, and no drift on switching.');

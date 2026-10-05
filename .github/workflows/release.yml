@@ -121,6 +121,8 @@ jobs:
       - run: node scripts/release.mjs configure
       - name: Build installer (sign and notarize macOS for publication)
         env:
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
           APPLE_ID: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_ID || '' }}
           APPLE_PASSWORD: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_PASSWORD || '' }}
           APPLE_TEAM_ID: 6LV9UQMTRU
@@ -128,7 +130,11 @@ jobs:
           APPLE_API_ISSUER: ${{ runner.os == 'macOS' && env.RELEASE_PUBLISH == 'true' && secrets.APPLE_API_ISSUER || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --target "$RELEASE_TARGET" --config .tmp/release-config.json
+        run: |
+          if [ "$RUNNER_OS" != macOS ] || [ "$RELEASE_PUBLISH" != true ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
+          fi
+          npm run tauri -- build --target "$RELEASE_TARGET" --config .tmp/release-config.json
       - run: npm run check
       - name: Verify the bundled Blender converter
         run: |

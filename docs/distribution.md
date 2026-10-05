@@ -105,7 +105,7 @@ verifies Minisign signatures and the version in their trusted comment before
 publication; clients also require this signed version to match the update feed.
 All update downloads use immutable version URLs and support resumable ranges.
 
-The first updater-enabled version is 0.2.1. Older copies without the updater
+The first updater-enabled version is 0.2.2. Older copies without the updater
 must be replaced by downloading that version from the website. Future releases
 use the same signing key and appear automatically. Back up the encrypted private
 key and its password securely; losing this key prevents updates to existing apps.

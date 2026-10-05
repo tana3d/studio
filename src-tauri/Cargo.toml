@@ -1,6 +1,6 @@
 [package]
 name = "tana-studio"
-version = "0.2.1"
+version = "0.2.2"
 description = "Tana Studio desktop scene and video editor"
 edition = "2021"
 license = "Apache-2.0"
