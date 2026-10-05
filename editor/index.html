@@ -15,7 +15,7 @@
   <div id="controlbar" class="panel" role="group" aria-label="Control target">
     <span class="eyebrow">CONTROL</span>
     <button id="mode-camera" aria-pressed="true">Camera</button>
-    <button id="mode-character" aria-pressed="false">Character</button>
+    <button id="mode-character" aria-pressed="false" title="Toggle character / camera control · Ctrl+Shift+`">Character<span class="shortcut-badge" aria-hidden="true">`</span></button>
     <select id="control-character" aria-label="Character to control"></select>
   </div>
   </div>
@@ -37,7 +37,7 @@
   </section>
   <section id="cast-panel" role="tabpanel" aria-labelledby="action-tab" hidden><h2>Cast & control</h2><label for="actor-select">Selected character</label><select id="actor-select"></select><button id="control-actor" class="wide">Control character</button><button id="free-camera" class="wide subtle">Free camera</button><label for="frame-format">Video frame</label><select id="frame-format"><option value="landscape">Landscape · 16:9</option><option value="portrait">Vertical · 9:16</option></select><label for="gesture-select">Animation</label><select id="gesture-select"></select><p id="control-hint" class="muted">Free camera · WASD to move<br>Right-drag to look around</p><button id="export-all" class="wide subtle">Download scene ↗</button><details id="scenejson"><summary>Scene data</summary><pre></pre></details></section></aside>
   <div id="viewport-label"><span class="live-dot"></span><span id="mode-label">LIVE SCENE</span></div>
-  <div id="hint">WASD move · right-drag aim · Q/E rotate · F free view · ⌘/Ctrl Z undo · right-click camera to delete</div>
+  <div id="hint">Ctrl ⇧ 1–9 camera · Ctrl ⇧ ` character · WASD move · mouse look · scroll zoom</div>
   <div id="toast" role="status"></div>
   </div>
   <section id="timeline" class="panel" aria-label="Layered performance timeline">

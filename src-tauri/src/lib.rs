@@ -2,6 +2,7 @@ mod chatgpt;
 mod collection;
 mod deep_links;
 mod export;
+mod input;
 mod library;
 mod loopback;
 mod model_import;
@@ -26,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            input::studio_capture_mouse,
             chatgpt::chatgpt_status,
             chatgpt::chatgpt_start,
             chatgpt::chatgpt_cancel,
@@ -53,6 +55,13 @@ pub fn run() {
             native_smoke::native_smoke_report,
         ])
         .on_page_load(|_webview, _payload| {
+            #[cfg(debug_assertions)]
+            if _payload.event() == tauri::webview::PageLoadEvent::Finished
+                && _webview.label() == "main"
+                && std::env::var_os("STUDIO_CONTROLS_SMOKE_REPORT").is_some()
+            {
+                let _ = _webview.eval(include_str!("../../tests/native-controls-smoke.js"));
+            }
             #[cfg(debug_assertions)]
             if _payload.event() == tauri::webview::PageLoadEvent::Finished
                 && _webview.label() == "catalog"
@@ -103,6 +112,14 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::Focused(false)
+                    | tauri::WindowEvent::CloseRequested { .. }
+                    | tauri::WindowEvent::Destroyed
+            ) {
+                input::release(window);
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(catalog) = window.app_handle().get_webview_window("catalog") {
                     let _ = catalog.close();
@@ -112,6 +129,7 @@ pub fn run() {
         .setup(|app| {
             // No tray, global shortcuts, file crawler, or background index.
             app.manage(Arc::new(ChatGptState::new(app.handle().clone())?));
+            input::setup(app)?;
             deep_links::setup(app)?;
             Ok(())
         })

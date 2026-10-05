@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
+import { damping } from './controls.mjs';
 
 const loader = new GLTFLoader();
 const models = new Map();
@@ -60,13 +61,17 @@ export async function createActor(asset, spec) {
     copy.name = asset.id === 'performer' ? 'Walk' : clip.name || `Walk ${i + 1}`;
     return copy;
   });
-  if (!clips.some(c => /idle|standing/i.test(c.name))) clips.push(makeIdleClip(clips));
+  const upright = name => !/crouch|duck|sneak/i.test(name);
+  if (!clips.some(c => upright(c.name) && /idle|standing/i.test(c.name))) clips.push(makeIdleClip(clips));
   const actions = Object.fromEntries(clips.map(c => [c.name, mixer.clipAction(c)]));
   const names = Object.keys(actions);
-  const idle = names.find(n => /idle|standing/i.test(n));
-  const walk = names.find(n => /walk/i.test(n)) ?? idle;
-  const run = names.find(n => /running|run/i.test(n)) ?? walk;
-  const actor = { group, spec, mixer, actions, idle, walk, run, clip: idle, clipTime: 0, wp: 0, gesture: '', assetId: asset.id,
+  const idle = names.find(n => upright(n) && /idle|standing/i.test(n));
+  const walk = names.find(n => upright(n) && /walk/i.test(n)) ?? idle;
+  const run = names.find(n => upright(n) && /running|run/i.test(n)) ?? walk;
+  const crouch=names.find(n=>/crouch|duck/i.test(n)&&!/walk|run|move/i.test(n))??names.find(n=>/crouch|duck/i.test(n));
+  const crouchWalk=names.find(n=>/crouch|duck/i.test(n)&&/walk|move|sneak/i.test(n))??crouch;
+  const jump=names.find(n=>/jump|leap/i.test(n));
+  const actor = { group, spec, mixer, actions, idle, walk, run, crouch, crouchWalk, jump, jumpState:null, clip: idle, clipTime: 0, wp: 0, gesture: '', assetId: asset.id,
     layers: {}, velocity: new THREE.Vector2(), directed: false, present: true };
   for (const [name, action] of Object.entries(actions)) {
     action.play().setEffectiveWeight(0);
@@ -79,7 +84,8 @@ export async function createActor(asset, spec) {
 // Models without idle clips get a neutral stance averaged over their walk cycle,
 // then a small breathing motion. This avoids stopping on one airborne walk frame.
 function makeIdleClip(clips) {
-  const source = clips.find(c => /walk/i.test(c.name)) ?? clips[0];
+  const upright = clips.filter(c => !/crouch|duck|sneak/i.test(c.name));
+  const source = upright.find(c => /walk/i.test(c.name)) ?? upright[0];
   const tracks = [];
   for (const track of source?.tracks ?? []) {
     const n = track.getValueSize(), interpolant = track.createInterpolant();
@@ -128,6 +134,21 @@ export function animateActor(actor, clip, dt, rate = 1) {
   const total = Object.values(actor.layers).reduce((sum, x) => sum + x.weight, 0);
   for (const layer of Object.values(actor.layers)) layer.weight /= total || 1;
   poseActor(actor, clip, actor.layers[clip].time, actor.layers);
+}
+
+export function animateLocomotion(actor, speed, dt) {
+  const moving=THREE.MathUtils.smoothstep(speed,.03,.45);
+  const running=actor.run===actor.walk?0:THREE.MathUtils.smoothstep(speed,2.1,3.7);
+  const weights={};
+  for(const [name,weight] of [[actor.idle,1-moving],[actor.walk,moving*(1-running)],[actor.run,moving*running]])weights[name]=(weights[name]??0)+weight;
+  const phase=actor.layers[actor.walk].time/Math.max(actor.actions[actor.walk].getClip().duration,.001)+dt*Math.max(.1,speed/1.6)/Math.max(actor.actions[actor.walk].getClip().duration,.001);
+  for(const [name,layer] of Object.entries(actor.layers)) {
+    layer.weight+=( (weights[name]??0)-layer.weight )*damping(18,dt);
+    if(name!==actor.idle&&(name===actor.walk || name===actor.run))layer.time=phase*actor.actions[name].getClip().duration;
+    else if(layer.weight>.001)layer.time+=dt;
+  }
+  const clip=Object.keys(weights).reduce((a,b)=>weights[a]>weights[b]?a:b);
+  poseActor(actor,clip,actor.layers[clip].time,actor.layers);
 }
 
 export function blendLayers(from, to, alpha) {

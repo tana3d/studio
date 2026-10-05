@@ -291,6 +291,8 @@ try {
     return {custom:window.__scene.environment.customSet,parts:window.__scene.environment.props.length,bounds:window.__scene.environment.bounds};
   });
   assert.equal(sceneResult.custom,true);assert.equal(sceneResult.parts,1);assert.ok(sceneResult.bounds[1][0]>=10);
+  // Character mode captures mouse look; switch to camera/editing before sizing set pieces.
+  await editor.locator('#mode-camera').click();
   const modelId=await editor.evaluate(()=>window.__scene.environment.props[0].id);
   const resize=await editor.evaluate(id=>window.__studio.rixse.dispatch({type:'resize_prop',payload:{object_id:id,scale:1.5}},'you'),modelId);
   assert.equal(resize.ok,true);assert.equal(await editor.evaluate(()=>window.__scene.environment.props[0].scale),1.5);

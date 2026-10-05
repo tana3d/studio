@@ -29,7 +29,11 @@ Library and Direct the action share the right sidebar. Movement uses a keyboard.
    stay intact. There is no need to switch Back to live. Finish an active movement
    recording or video export before adding characters.
 2. Select the character and click **Control character**. WASD moves, Shift runs,
-   right-drag turns the view. The Animation menu plays the model's clips; movement
+   Space jumps; hold C to crouch when the model has a crouch animation. Click the
+   scene to capture the mouse for looking (Escape releases it); right-drag
+   is also available. Mouse looking alone never moves the character. Diagonals use
+   the same speed as straight movement, with smooth steering, stopping and animation
+   blending. The Animation menu plays the model's clips; movement
    returns it to locomotion. **Camera / Character** at the top chooses what your controls drive. Picking a
    viewpoint never changes that mode: you can perform through Crane, Dolly, Close-Up,
    a saved camera, or Free. The adjacent character dropdown chooses your performer.
@@ -96,7 +100,7 @@ hold the preceding final pose. Muted clips do not drive characters. Characters w
 no enabled clips hold their baseline pose. Record until the character settles if
 you want a resting end pose.
 
-Right-click empty space (or middle-click) and choose **Camera** to start placement.
+Right-click empty space in Camera mode and choose **Camera** to start placement.
 Move it onto the set, use Q/E to turn it (Shift for finer steps), scroll to adjust
 height, then click to confirm. Escape
 cancels. Moving a placed camera preserves its viewing angle.
@@ -118,6 +122,16 @@ stays selected. Character view follows the performer; other camera views retain
 their normal fixed or tracking behavior. Camera mode lets you frame the shot
 without driving the character. Returning to Character mode preserves that shot.
 Right-click a camera model **or its view button** and choose **Delete camera**.
+
+Use **Ctrl Shift 1** for Free, and **Ctrl Shift 2–9** for the first eight
+world cameras. The small number at each button's bottom right identifies its
+shortcut. These shortcuts also select Camera control and focus the viewport from
+chat. **Ctrl Shift `** toggles Character / Camera control while retaining the
+current viewpoint. Scrolling smoothly zooms the lens; middle-drag pans in Camera
+mode. While placing a prop/camera, scrolling still changes its height. Hold Alt
+to adjust the height of an already selected object/camera. In Character follow
+view, scrolling adjusts the following distance. macOS uses Cmd Shift 3–5 for
+screenshots by default; Ctrl Shift is available without changing system settings.
 Deleting the active camera returns to Free view. Character and Free are navigation
 views, not removable scene cameras.
 
@@ -164,18 +178,20 @@ compression and animation retargeting are not supported in this prototype.
 | Input | Action |
 |---|---|
 | WASD / Shift | Accelerate / run controlled character, or fly Free view |
-| Space / C | Move Free view up / down |
+| Space / C | Jump / hold crouch in Character; up / down in Free camera |
 | F / 0 | Independent Free view |
 | Right-drag | Look / steer movement, or aim a pinned camera |
 | Right-click camera or view button | Camera deletion menu |
 | Left-drag prop | Move it (red placement is denied) |
-| Middle-click | Context placement menu |
+| Middle-drag | Pan camera in Camera control |
 | Q / E (+ Shift) | Rotate selected prop or camera (15° / 5°) |
-| Scroll over viewport | Raise/lower selected prop or camera |
+| Scroll over viewport | Zoom camera (height during placement; Alt for selected object) |
 | G | Toggle grid snapping |
 | Delete | Remove selected prop or camera |
 | Cmd/Ctrl Z / Cmd/Ctrl Shift Z | Undo / redo scene edits |
-| Escape | Cancel placement / deselect |
+| Escape | Release mouse capture / cancel placement / deselect |
+| Ctrl Shift 1–9 | Camera control: Free, then first eight cameras |
+| Ctrl Shift ` | Toggle Character / Camera control; keep current view |
 | 1–9 | Select character/camera view |
 | R | Export video / cancel export |
 

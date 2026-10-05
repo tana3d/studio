@@ -32,3 +32,8 @@ tokio = { version = "1", features = ["sync", "macros", "time"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 zega = { git = "https://github.com/zegadb/zega", rev = "4ecaf43064c7320cd9d587fc68f21919e50ebc1d", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSEvent", "block2"] }
+block2 = "0.6"

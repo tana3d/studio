@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { editableScene } from './scenes.js';
 import { modelScale, scaleModel } from './model-size.js';
-import { characterAssets, createActor, animateActor, poseActor, importModel, normalizedModel, blendLayers } from './characters.js';
+import { characterAssets, createActor, animateActor, animateLocomotion, poseActor, importModel, normalizedModel, blendLayers } from './characters.js';
+import { damping, movementIntent, turnToward, slideCharacter, controlShortcut, jumpStep } from './controls.mjs';
 import { CameraTimeline } from './camera-timeline.mjs';
 import { CameraTransitions } from './camera-transitions.js';
 import { PerformanceTimeline } from './performance.mjs';
@@ -358,12 +359,13 @@ const actorReady = Promise.all(SCENE.characters.map(async spec => {
 }));
 
 // ---------- player ----------
-const player = { pos: new THREE.Vector3(0, 1.7, 6), yaw: 0, pitch: 0, third: false };
+const player = { pos: new THREE.Vector3(0, 1.7, 6), yaw: 0, pitch: 0, distance:3.4, third: false };
 const camera = new THREE.PerspectiveCamera(62, frameAspect(), 0.1, 200);
 let look = null;  // {x, y} while left-dragging empty space
 let drag = null;  // {kind:'prop'|'cam', rec, pos:[x,z], start:[x,z], valid, placing, lastMouse}
 let selected = null;
 let selectedModelActor = null;
+let nativeMouseCaptured=false,captureSequence=0;
 
 // ---------- input ----------
 const keys = {};
@@ -374,7 +376,8 @@ addEventListener('keydown', e => {
     if(e.code==='Escape'){e.preventDefault();closePreview();}
     return;
   }
-  if (e.target.closest('input, select, textarea')) return;
+  if(controlShortcut(e)){e.preventDefault();if(!e.repeat)applyControlShortcut(controlShortcut(e));return;}
+  if (e.target.closest?.('input, select, textarea, [contenteditable=true]')) return;
   if(shotDrag){if(e.code==='Escape'){e.preventDefault();finishShotDrag(true);}return;}
   if(clipDrag){if(e.code==='Escape'){e.preventDefault();finishClipDrag(true);}return;}
   if ((e.metaKey || e.ctrlKey) && ['KeyZ','KeyY'].includes(e.code)) {
@@ -383,14 +386,24 @@ addEventListener('keydown', e => {
   if((e.metaKey||e.ctrlKey)&&e.code==='KeyB'){
     e.preventDefault();if(!e.repeat)splitAtPlayhead();return;
   }
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
   if (e.repeat) return;
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
   if (movementCodes.includes(e.code) && controlled && controlMode === 'character' && canEditWorld() && history.pending?.label !== 'Move character') history.begin('Move character');
+  if(e.code==='Space'&&controlMode==='character'&&controlled&&['live','recording'].includes(timeline.mode)){
+    const a=actors[controlled];if(!a.jumpState){
+      if(canEditWorld()&&history.pending?.label!=='Move character')history.begin('Move character');
+      a.jumpState={floor:a.group.position.y,velocity:5.2*a.group.scale.x};a.gesture='';
+      if(a.jump){a.layers[a.jump].time=0;a.clipTime=0;}
+    }
+  }
+  if(e.code==='KeyC'&&controlMode==='character'&&controlled&&!actors[controlled].crouch)hint('This model has no crouch animation.');
   if (e.code === 'KeyF') enterFreeCamera();
   if (e.code === 'KeyR') toggleRec();
   if (e.code === 'KeyG' && canEditWorld() && !drag) { history.run('Toggle grid snapping', () => snapOn = !snapOn); hint(`snap ${snapOn ? 'on' : 'off'}`); }
   if (e.code === 'Escape') {
+    releaseMouse();clearMovementKeys();
     if (drag?.placing) cancelPlacement(); else { select(null); selectedCam = null; }
     $('camera-menu').hidden = true;
   }
@@ -414,12 +427,14 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup',e=>keys[e.code]=false);
-addEventListener('blur',()=>{Object.keys(keys).forEach(k=>delete keys[k]);if(look?.moved && history.pending?.label==='Aim camera')history.commit();look=null;});
+addEventListener('blur',()=>{releaseMouse();clearMovementKeys();finishCharacterMovement();finishCameraNavigation();if(look?.moved && history.pending)history.commit();look=null;});
 
 // ---------- camera rig ----------
 let camIndex = -1; // Free is an editor view, never a camera in the world.
 let selectedCam = null;
-const freeRig = { pos: new THREE.Vector3(0, 1.7, 6), yaw: 0, pitch: 0 };
+const freeRig = { pos: new THREE.Vector3(0, 1.7, 6), yaw: 0, pitch: 0, fov:62 };
+const cameraVelocity = new THREE.Vector3();
+let zoomRemaining=0, zoomSpec=null;
 const cameraEdit=new CameraTimeline();
 const transitions=new CameraTransitions(renderer), outgoingCamera=camera.clone();
 let previewEdit=false, selectedShot=null, adjustingShot=false, shotDrag=null, pendingShot=null;
@@ -430,27 +445,50 @@ const camsEl = document.getElementById('cams');
 function rebuildCamButtons() {
   camsEl.innerHTML = '';
   const free = document.createElement('button'); free.id = 'cam-free'; free.textContent = 'Free'; free.onclick = enterFreeCamera;
+  cameraShortcutBadge(free,1);
   makeCameraDraggable(free,'free');camsEl.appendChild(free);
   SCENE.cameras.forEach((c, i) => {
-    const b = document.createElement('button'); b.textContent = `${i + 1} ${c.name}`; b.id = `cam-${i}`;
+    const b = document.createElement('button'); b.textContent = c.name; b.id = `cam-${i}`;
+    if(i<8)cameraShortcutBadge(b,i+2);
     b.onclick = () => setCam(i);makeCameraDraggable(b,c.id);
     if (c.type !== 'player') b.oncontextmenu = e => { e.preventDefault(); openCameraMenu(c, e.clientX, e.clientY); };
     camsEl.appendChild(b);
   });
   updateCamButtons();
 }
+function cameraShortcutBadge(button,number){
+  const badge=document.createElement('span');badge.className='shortcut-badge';badge.textContent=number;badge.setAttribute('aria-hidden','true');button.append(badge);
+  button.title=`${button.firstChild.textContent} · Ctrl+Shift+${number}`;
+}
+function applyControlShortcut(shortcut){
+  if(drag||clipDrag||shotDrag||recorder)return;
+  if(look){if(look.moved&&look.spec&&history.pending)history.commit();look=null;}
+  if(shortcut.type==='character'){setControlMode(controlMode==='character'?'camera':'character');}
+  else if(shortcut.index===-1||SCENE.cameras[shortcut.index]){
+    setControlMode('camera');if(shortcut.index===-1)enterFreeCamera();else setCam(shortcut.index);
+  }else return;
+  cv.focus({preventScroll:true});
+}
+addEventListener('message',event=>{
+  if(event.source!==parent||event.origin!==location.origin||event.data?.type!=='studio-control-shortcut')return;
+  if($('catalog-dialog').open||$('shot-insert-dialog').open||$('export-dialog').open||!$('preview-window').hidden)return;
+  const shortcut=controlShortcut({code:event.data.code,metaKey:true,shiftKey:true});if(shortcut)applyControlShortcut(shortcut);
+});
 function updateCamButtons() {
   [...camsEl.children].forEach(b => b.classList.toggle('active', !previewEdit && b.id === (camIndex < 0 ? 'cam-free' : `cam-${camIndex}`)));
 }
 function setCam(i) {
   if (drag) { hint('Finish placing the object or camera first.'); return; }
   if(recorder)return; previewEdit=false;adjustingShot=false;
+  finishCameraNavigation();clearMovementKeys();
   camIndex = i; select(null); selectedCam = camRegs.find(r => r.spec === SCENE.cameras[i]) ?? null;
+  updateCamera();if(controlMode==='character')alignCharacterView();
   updateCamButtons();
 }
 function enterFreeCamera() {
   if (drag) { hint('Finish placing the object or camera first.'); return; }
   if(recorder)return; previewEdit=false;adjustingShot=false;
+  finishCameraNavigation();clearMovementKeys();
   camIndex = -1; selectedCam = null; select(null); updateCamButtons(); refreshCast();
   hint(controlMode==='character' ? `Free view · still controlling ${controlled}` : 'Free camera · WASD fly · Space / C up / down · right-drag look');
 }
@@ -466,6 +504,7 @@ function poseShot(target,spec){
 function updateCamera() {
   if(previewEdit){const sample=cameraEdit.sample(timeline.time,timeline.duration);if(sample){poseShot(camera,sample.shot.spec);return;}}
   const spec = SCENE.cameras[camIndex];
+  const fov=spec?.fov??freeRig.fov;if(camera.fov!==fov){camera.fov=fov;camera.updateProjectionMatrix();}
   if (!spec) {
     camera.position.copy(freeRig.pos);
     camera.quaternion.setFromEuler(new THREE.Euler(freeRig.pitch, freeRig.yaw, 0, 'YXZ'));
@@ -474,7 +513,8 @@ function updateCamera() {
     if (!followed) return;
     const p = followed.group.position;
     const scale=followed.group.scale.x;
-    camera.position.set(p.x + Math.sin(player.yaw) * 3.4*scale, p.y + (2.4 + player.pitch * 1.5)*scale, p.z + Math.cos(player.yaw) * 3.4*scale);
+    const elevation=.32-player.pitch, distance=Math.cos(elevation)*player.distance*scale;
+    camera.position.set(p.x+Math.sin(player.yaw)*distance,Math.max(p.y+.2*scale,p.y+(1.25+Math.sin(elevation)*player.distance)*scale),p.z+Math.cos(player.yaw)*distance);
     camera.lookAt(p.x, p.y + 1.25*scale, p.z);
   } else if (spec.type === 'static') {
     camera.position.set(...spec.position); camera.lookAt(tmpV.set(...spec.lookAt));
@@ -486,13 +526,25 @@ function updateCamera() {
   }
 }
 function movePlayer(dt) {
-  if (previewEdit || recorder || controlMode !== 'camera' || camIndex !== -1 || drag) return;
+  if(zoomRemaining){
+    const amount=zoomRemaining*damping(16,dt);zoomRemaining-=amount;
+    const target=zoomSpec??freeRig;target.fov=THREE.MathUtils.clamp((target.fov??62)+amount,15,100);
+    if(Math.abs(zoomRemaining)<.01){zoomRemaining=0;finishCameraNavigation();}
+  }
+  if (previewEdit || recorder || controlMode !== 'camera' || camIndex !== -1 || drag) {cameraVelocity.set(0,0,0);return;}
   const f = Number(!!keys.KeyW) - Number(!!keys.KeyS), s = Number(!!keys.KeyD) - Number(!!keys.KeyA);
   const up = Number(!!keys.Space) - Number(!!keys.KeyC);
-  if (!f && !s && !up) return;
-  const speed = (keys.ShiftLeft || keys.ShiftRight ? 8 : 4) * dt;
+  const speed = keys.ShiftLeft || keys.ShiftRight ? 8 : 4;
   const direction = new THREE.Vector3(s, 0, -f).applyEuler(new THREE.Euler(freeRig.pitch, freeRig.yaw, 0, 'YXZ'));
-  direction.y += up; direction.normalize(); freeRig.pos.addScaledVector(direction, speed);
+  direction.y += up; direction.normalize().multiplyScalar(speed);
+  cameraVelocity.lerp(direction,damping(direction.lengthSq()?14:22,dt));
+  if(cameraVelocity.length()<.01)cameraVelocity.set(0,0,0);
+  freeRig.pos.addScaledVector(cameraVelocity,dt);
+}
+function finishCameraNavigation(){
+  if(zoomRemaining){const target=zoomSpec??freeRig;target.fov=THREE.MathUtils.clamp((target.fov??62)+zoomRemaining,15,100);}
+  zoomRemaining=0;zoomSpec=null;cameraVelocity.set(0,0,0);
+  if(history.pending?.label==='Zoom camera')history.commit();
 }
 function pinCamera(spec) {
   if (spec.type === 'static') return;
@@ -813,6 +865,55 @@ function deleteCamera(spec) {
 
 // ---------- mouse wiring ----------
 const cv = renderer.domElement;
+cv.tabIndex=0;cv.setAttribute('aria-label','Scene viewport');
+const mouseEvents=window.parent.__TAURI__?.event;
+const mouseListeners=mouseEvents?Promise.all([
+  mouseEvents.listen('studio-mouse-look',event=>{if(nativeMouseCaptured&&controlMode==='character')mouseLook(...event.payload);}),
+  mouseEvents.listen('studio-mouse-released',()=>{nativeMouseCaptured=false;captureSequence++;cv.style.cursor='crosshair';clearMovementKeys();finishCharacterMovement();})
+]):Promise.resolve();
+function releaseMouse(){
+  captureSequence++;nativeMouseCaptured=false;
+  if(libraryNative&&navigator.platform.includes('Mac'))void libraryNative.invoke('studio_capture_mouse',{capture:false}).catch(()=>{});
+  if(document.pointerLockElement===cv)document.exitPointerLock();
+  cv.style.cursor='crosshair';
+}
+addEventListener('pagehide',()=>{releaseMouse();void mouseListeners.then(stops=>stops?.forEach(stop=>stop())).catch(()=>{});},{once:true});
+function mouseLook(dx,dy){
+  const spec=editableCameraSpec();
+  if(controlMode==='character'){
+    player.yaw-=dx*.003;player.pitch=THREE.MathUtils.clamp(player.pitch-dy*.003,-1.2,1.2);
+    if(camIndex<0){freeRig.yaw=player.yaw;freeRig.pitch=player.pitch;}
+  }else if(spec&&spec.type!=='player'){if(canEditCameras())aimCamera(spec,-dx*.003,-dy*.003);}
+  else{const rig=camIndex<0?freeRig:player;rig.yaw-=dx*.003;rig.pitch=THREE.MathUtils.clamp(rig.pitch-dy*.003,-1.4,1.4);}
+}
+function panCamera(dx,dy){
+  const spec=editableCameraSpec();if(spec?.type==='player')return;
+  const distance=Math.max(2,camera.position.distanceTo(actors[selectedActor]?.group.position??new THREE.Vector3()));
+  const scale=2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*distance/cv.getBoundingClientRect().height;
+  const offset=new THREE.Vector3(-dx*scale,dy*scale,0).applyQuaternion(camera.quaternion);
+  if(!spec)freeRig.pos.add(offset);
+  else if(canEditCameras()){pinCamera(spec);translateCamera({spec},new THREE.Vector3(...spec.position).add(offset).toArray());}
+}
+document.addEventListener('pointerlockchange',()=>{
+  if(document.pointerLockElement!==cv){clearMovementKeys();finishCharacterMovement();hint('Mouse released · click the scene to look again');}
+});
+document.addEventListener('pointerlockerror',()=>hint('Hold right mouse and move to look around.'));
+cv.addEventListener('click',async()=>{
+  if(controlMode!=='character'||drag||!['live','recording'].includes(timeline.mode)||document.pointerLockElement===cv)return;
+  const sequence=++captureSequence;
+  if(libraryNative&&navigator.platform.includes('Mac')){
+    try{
+      await mouseListeners;
+      const captured=await libraryNative.invoke('studio_capture_mouse',{capture:true});
+      if(sequence!==captureSequence||controlMode!=='character'){releaseMouse();return;}
+      if(captured){nativeMouseCaptured=true;cv.style.cursor='none';hint('Mouse look · Esc releases mouse');return;}
+    }catch(error){console.info('Mouse capture unavailable:',error?.message??error);}
+  }
+  if(cv.requestPointerLock){
+    const failed=error=>{console.info('Mouse capture unavailable:',error?.message??error);hint('Hold right mouse and move to look around.');};
+    try{cv.requestPointerLock()?.catch(failed);}catch(error){failed(error);}
+  }
+});
 function openMenuAt(cx, cy) {
   ctxPoint = surfacePoint(cx, cy); if (!ctxPoint) return;
   ctxmenu.querySelectorAll('[data-act]').forEach(el => { el.style.display = ctxPoint.onWall && !['camera','neonSign'].includes(el.dataset.act) ? 'none' : ''; });
@@ -821,10 +922,15 @@ function openMenuAt(cx, cy) {
 function startLook(e, hit = null) {
   if(recorder || (previewEdit&&!adjustingShot&&controlMode==='camera'))return;
   const spec = editableCameraSpec();
-  look={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,button:e.button,hit,moved:false,character:controlMode==='character',spec:controlMode==='camera'&&spec?.type!=='player'?spec:null};
+  look={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,button:e.button,hit,moved:false,pan:e.button===1,character:controlMode==='character',spec:controlMode==='camera'&&spec?.type!=='player'?spec:null};
 }
 cv.addEventListener('mousedown',e=>{
-  if (e.button===1) { e.preventDefault();if(canEditWorld()&&!drag)openMenuAt(e.clientX,e.clientY);return; }
+  cv.focus({preventScroll:true});
+  if(nativeMouseCaptured||document.pointerLockElement===cv)return;
+  if(controlMode==='character'&&!drag&&e.button===0&&['live','recording'].includes(timeline.mode)){
+    if(!cv.requestPointerLock)startLook(e);return;
+  }
+  if (e.button===1) { e.preventDefault();if(controlMode==='camera'&&!drag)startLook(e);return; }
   if (e.button===2) { startLook(e,pickAt(e.clientX,e.clientY));return; }
   if (e.button!==0) return;
   if (drag?.placing) { if(drag.valid)commitPlacement();else hint('This object overlaps another object.');return; }
@@ -839,39 +945,48 @@ cv.addEventListener('mousedown',e=>{
   else { select(null);if(camIndex<0)selectedCam=null;startLook(e); }
 });
 addEventListener('mousemove',e=>{
+  if(nativeMouseCaptured)return; // AppKit supplies raw deltas while the cursor is locked.
+  if(document.pointerLockElement===cv){mouseLook(e.movementX,e.movementY);return;}
   if(look) {
     const dx=e.clientX-look.x,dy=e.clientY-look.y;
     if (!dx&&!dy) return;
     if(!look.moved && Math.hypot(e.clientX-look.startX,e.clientY-look.startY)<4)return;
     if(!look.moved) {
-      if (look.spec && canEditCameras() && !drag) history.begin('Aim camera');
+      if (look.spec && canEditCameras() && !drag) history.begin(look.pan?'Pan camera':'Aim camera');
       look.moved=true;
     }
-    if(look.spec) { if(canEditCameras())aimCamera(look.spec,-dx*.0042,-dy*.0042); }
-    else {
-      const rig=look.character?player:camIndex<0?freeRig:player;
-      rig.yaw-=dx*.0042;rig.pitch=THREE.MathUtils.clamp(rig.pitch-dy*.0042,-1.4,1.4);
-    }
+    if(look.pan)panCamera(dx,dy);else mouseLook(dx,dy);
     look.x=e.clientX;look.y=e.clientY;
   } else if(drag)moveGhost(e);
 });
 addEventListener('mouseup',e=>{
   if(look && e.button===look.button) {
-    if(look.moved && look.spec && history.pending?.label==='Aim camera')history.commit();
+    if(look.moved && look.spec && ['Aim camera','Pan camera'].includes(history.pending?.label))history.commit();
     if(!look.moved && e.button===2 && look.hit?.cam && !drag)openCameraMenu(look.hit.cam.spec,e.clientX,e.clientY);
+    else if(!look.moved&&e.button===2&&!look.hit&&canEditWorld()&&!drag&&controlMode==='camera')openMenuAt(e.clientX,e.clientY);
     look=null;return;
   }
   if(e.button===0&&drag&&!drag.placing)finishDrag();
 });
 cv.addEventListener('wheel',e=>{
-  const cam=drag?.kind==='cam'?drag.rec:previewEdit?null:selectedCam;
+  const cam=drag?.kind==='cam'?drag.rec:e.altKey&&!previewEdit?selectedCam:null;
   if(cam && canEditCameras()) {
     e.preventDefault();if(!drag)history.begin('Raise camera');
     const p=[...cam.spec.position];p[1]=THREE.MathUtils.clamp(p[1]-Math.sign(e.deltaY)*.12,.1,18);translateCamera(cam,p);if(!drag)history.commit();return;
   }
-  if(!canEditWorld())return;
-  const rec=drag?.kind==='prop'?drag.rec:selected;if(!rec)return;
-  e.preventDefault();if(!drag)history.begin('Raise object');elevateProp(rec,-Math.sign(e.deltaY)*.12);setCollidersAt(rec);if(!drag)history.commit();
+  const rec=drag?.kind==='prop'?drag.rec:e.altKey?selected:null;
+  if(rec&&canEditWorld()){
+    e.preventDefault();if(!drag)history.begin('Raise object');elevateProp(rec,-Math.sign(e.deltaY)*.12);setCollidersAt(rec);if(!drag)history.commit();return;
+  }
+  if(drag||recorder||look||previewEdit&&!adjustingShot)return;
+  const pixels=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?cv.clientHeight:1);
+  if(controlMode==='character'&&SCENE.cameras[camIndex]?.type==='player'){
+    e.preventDefault();player.distance=THREE.MathUtils.clamp(player.distance+pixels*.008,1.2,15);return;
+  }
+  if(controlMode!=='camera'||!canEditCameras())return;
+  e.preventDefault();
+  if(!zoomRemaining){history.begin('Zoom camera');zoomSpec=editableCameraSpec()??null;}
+  zoomRemaining=THREE.MathUtils.clamp(zoomRemaining+pixels*.025,-80,80);
 },{passive:false});
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('click',e=>{
@@ -913,6 +1028,7 @@ const timeline = new PerformanceTimeline(
     for (const [name, actor] of Object.entries(actors)) {
       const from = a.actors[name], to = b.actors[name] ?? from;
       if(partial && !from)continue;
+      actor.jumpState=null;
       actor.group.visible = !!from && actor.present;
       if (!from) continue;
       actor.group.position.fromArray(from.position).lerp(new THREE.Vector3(...to.position), alpha);
@@ -928,35 +1044,41 @@ function simulate(dt, recordingActors = null) {
   for (const [name, a] of Object.entries(actors)) {
     if (!a.group.visible || (recordingActors && !recordingActors.includes(name))) continue;
     let dx=0,dz=0,speed=a.spec.speed??1.5;
+    const crouching=name===controlled&&controlMode==='character'&&keys.KeyC&&a.crouch&&!a.jumpState;
     if (name===controlled && controlMode==='character') {
       const f=Number(!!keys.KeyW)-Number(!!keys.KeyS),side=Number(!!keys.KeyD)-Number(!!keys.KeyA);
-      dx=-Math.sin(player.yaw)*f+Math.cos(player.yaw)*side;dz=-Math.cos(player.yaw)*f-Math.sin(player.yaw)*side;
-      speed=keys.ShiftLeft||keys.ShiftRight?3.6:1.6;
+      speed=crouching?.85:keys.ShiftLeft||keys.ShiftRight?3.8:1.8;
+      const intent=movementIntent(f,side,player.yaw,speed);dx=intent.x;dz=intent.z;
     } else if(a.spec.path?.length&&!a.gesture&&!a.directed) {
       const target=a.spec.path[a.wp];dx=target[0]-a.group.position.x;dz=target[2]-a.group.position.z;
       if(Math.hypot(dx,dz)<.12){a.wp=(a.wp+1)%a.spec.path.length;dx=dz=0;}
     }
     const intent=new THREE.Vector2(dx,dz);if(intent.lengthSq())intent.normalize().multiplyScalar(speed);
-    a.velocity.lerp(intent,1-Math.exp(-dt*(intent.lengthSq()?8:12)));
+    a.velocity.lerp(intent,damping(intent.lengthSq()?18:22,dt));
     if(a.velocity.length()<.015)a.velocity.set(0,0);
     const p=a.group.position,old=p.clone();
+    if(a.jumpState){
+      const jump=jumpStep(p.y,a.jumpState.velocity,a.jumpState.floor,a.group.scale.x,dt);p.y=jump.y;
+      if(jump.landed)a.jumpState=null;else a.jumpState.velocity=jump.velocity;
+    }
     const mx=a.velocity.x*dt,mz=a.velocity.y*dt;
     const actorScale=a.group.scale.x;
-    if(validAt(p.x+mx,p.z,.64*actorScale,.64*actorScale,p.y,1.8*actorScale))p.x+=mx;else a.velocity.x=0;
-    if(validAt(p.x,p.z+mz,.64*actorScale,.64*actorScale,p.y,1.8*actorScale))p.z+=mz;else a.velocity.y=0;
-    const actualSpeed=p.distanceTo(old)/dt;
-    if(a.velocity.lengthSq()>.001) {
-      const targetYaw=Math.atan2(a.velocity.x,a.velocity.y);
-      const delta=Math.atan2(Math.sin(targetYaw-a.group.rotation.y),Math.cos(targetYaw-a.group.rotation.y));
-      a.group.rotation.y+=THREE.MathUtils.clamp(delta,-7*dt,7*dt);
+    if(mx||mz){const moved=slideCharacter(p,{x:mx,z:mz},.3*actorScale,worldBounds(),colliders,(crouching?1:1.8)*actorScale);p.x=moved.x;p.z=moved.z;}
+    const actualSpeed=Math.hypot(p.x-old.x,p.z-old.z)/dt;
+    if(actualSpeed>.03) {
+      a.group.rotation.y=turnToward(a.group.rotation.y,Math.atan2(p.x-old.x,p.z-old.z),dt);
+    }else if(name===controlled&&controlMode==='character'&&!a.gesture){
+      a.group.rotation.y=turnToward(a.group.rotation.y,player.yaw+Math.PI,dt);
     }
-    if(actualSpeed>.08) {a.gesture='';animateActor(a,actualSpeed>2.3?a.run:a.walk,dt,Math.max(.3,actualSpeed/(actualSpeed>2.3&&a.run!==a.walk?3.6:1.6)));}
+    if(a.jumpState){if(a.jump)animateActor(a,a.jump,dt);else animateLocomotion(a,0,dt);}
+    else if(crouching){a.gesture='';animateActor(a,actualSpeed>.03?a.crouchWalk:a.crouch,dt,actualSpeed>.03?Math.max(.3,actualSpeed/.85):1);}
+    else if(actualSpeed>.03) {a.gesture='';animateLocomotion(a,actualSpeed,dt);}
     else if(a.gesture) {
       animateActor(a,a.gesture,dt);
       if(a.clipTime>=a.actions[a.gesture].getClip().duration&&!/dance|sitting/i.test(a.gesture))a.gesture='';
-    } else animateActor(a,a.idle,dt);
+    } else animateLocomotion(a,actualSpeed,dt);
   }
-  if(history.pending?.label==='Move character' && !movementCodes.some(k=>keys[k]) && (!controlled || actors[controlled].velocity.length()<.015))history.commit();
+  if(history.pending?.label==='Move character' && !movementCodes.some(k=>keys[k]) && (!controlled || !actors[controlled].jumpState&&actors[controlled].velocity.length()<.015))history.commit();
 }
 function updateEnvironment() {
   for (let i = 0; i < flickering.length; i++) {
@@ -986,7 +1108,7 @@ function refreshCast() {
   for (const clip of Object.keys(actors[selectedActor]?.actions ?? {})) gestures.add(new Option(clip, clip));
   $('control-actor').disabled = !selectedActor;
   $('control-actor').classList.toggle('active', controlled === selectedActor);
-  $('control-hint').textContent = controlMode==='character' ? `Controlling ${controlled} · WASD move · Shift run · right-drag steer. Any camera view.` : 'Camera control · right-drag to aim. Select Free to fly with WASD.';
+  $('control-hint').textContent = controlMode==='character' ? `Controlling ${controlled} · WASD move · Shift run · Space jump · hold C crouch (if supported) · click scene for mouse look · Esc releases mouse.` : 'Camera · right-drag look · middle-drag pan · scroll zoom · WASD fly in Free.';
 }
 $('actor-select').onchange = $('control-character').onchange = e => {
   finishCharacterMovement();
@@ -1001,7 +1123,7 @@ $('gesture-select').onchange = e => {
     if(timeline.mode==='recording')edit();else history.run('Character animation',edit);
   }
 };
-function clearMovementKeys() { Object.keys(keys).forEach(k=>delete keys[k]); }
+function clearMovementKeys() { Object.keys(keys).forEach(k=>delete keys[k]);cameraVelocity.set(0,0,0); }
 function finishCharacterMovement() {
   if(history.pending?.label==='Move character')history.commit();
 }
@@ -1018,13 +1140,18 @@ function setControlMode(mode) {
     hint('Return to live to perform with a character.');return;
   }
   if(mode===controlMode)return;
-  finishCharacterMovement();clearMovementKeys();
+  finishCharacterMovement();finishCameraNavigation();clearMovementKeys();
+  if(controlled)actors[controlled].velocity.set(0,0);
+  releaseMouse();
   controlMode=mode;controlled=mode==='character'?selectedActor:null;
   if(controlled) {
     actors[controlled].directed=true;
-    if(SCENE.cameras[camIndex]?.type!=='player')player.yaw=new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ').y;
+    alignCharacterView();
   }
   refreshCast();
+}
+function alignCharacterView(){
+  if(SCENE.cameras[camIndex]?.type!=='player')player.yaw=new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ').y;
 }
 $('mode-camera').onclick=()=>setControlMode('camera');
 $('mode-character').onclick=$('control-actor').onclick=()=>setControlMode('character');
@@ -1432,12 +1559,15 @@ function cameraSpecFor(id){
   }
   const source=SCENE.cameras.find(c=>c.id===id);if(!source)return null;
   const spec=cloneData(source);
-  if(spec.type==='player'){spec.type='track';spec.offset=[Math.sin(player.yaw)*3.4,2.4+player.pitch*1.5,Math.cos(player.yaw)*3.4];}
+  if(spec.type==='player'){
+    const scale=actors[selectedActor]?.group.scale.x??1,elevation=.32-player.pitch,distance=Math.cos(elevation)*player.distance*scale;
+    spec.type='track';spec.offset=[Math.sin(player.yaw)*distance,Math.max(.2,1.25+Math.sin(elevation)*player.distance)*scale,Math.cos(player.yaw)*distance];
+  }
   if(spec.type==='track')spec.target=selectedActor;
   return spec;
 }
 function makeCameraDraggable(button,id){
-  button.draggable=true;button.title='Drag into the camera track to insert an angle';
+  button.draggable=true;button.title=(button.title?button.title+' · ':'')+'Drag into the camera track to insert an angle';
   button.ondragstart=e=>{
     if(!canEditTimeline()){e.preventDefault();return;}
     timeline.stop();clearMovementKeys();
@@ -1699,15 +1829,16 @@ function captureEditState() {
     cameraEdit:cloneData({shots:cameraEdit.shots,end:cameraEdit.end}),selectedShot,previewEdit,
     actors:Object.fromEntries(Object.entries(actors).filter(([,a])=>a.present).map(([name,a])=>[name,{
       position:a.group.position.toArray(),yaw:a.group.rotation.y,scale:a.group.scale.x,clip:a.clip,clipTime:a.clipTime,layers:cloneData(a.layers),
-      velocity:a.velocity.toArray(),directed:a.directed,gesture:a.gesture,wp:a.wp,visible:a.group.visible
+      velocity:a.velocity.toArray(),jumpState:a.jumpState?{...a.jumpState}:null,directed:a.directed,gesture:a.gesture,wp:a.wp,visible:a.group.visible
     }])),
-    cameraId:SCENE.cameras[camIndex]?.id??null, free:{position:freeRig.pos.toArray(),yaw:freeRig.yaw,pitch:freeRig.pitch},
-    player:{yaw:player.yaw,pitch:player.pitch}, controlled, controlMode, selectedActor,selectedPropId:selected?.spec.id,selectedModelActor,
+    cameraId:SCENE.cameras[camIndex]?.id??null, free:{position:freeRig.pos.toArray(),yaw:freeRig.yaw,pitch:freeRig.pitch,fov:freeRig.fov},
+    player:{yaw:player.yaw,pitch:player.pitch,distance:player.distance}, controlled, controlMode, selectedActor,selectedPropId:selected?.spec.id,selectedModelActor,
     performances:[...timeline.items], active:timeline.active, timelineBase:timeline.base, mode:timeline.mode,time:timeline.time,
     imports:[...importedAssets], props:[...propAssets], characters:[...characterAssets]
   };
 }
 function restoreEditState(state) {
+  zoomRemaining=0;zoomSpec=null;cameraVelocity.set(0,0,0);
   videoSettings.aspect=state.frameFormat??'landscape';$('frame-format').value=videoSettings.aspect;$('export-aspect').value=videoSettings.aspect;resizeViewport();
   Object.keys(keys).forEach(k=>delete keys[k]);look=null;drag=null;selectedCam=null;select(null);window.__ghost=null;
   $('camera-menu').hidden=true;ctxmenu.style.display='none';
@@ -1721,11 +1852,11 @@ function restoreEditState(state) {
     if(!data)continue;
     a.spec=SCENE.characters.find(c=>c.name===name);a.group.position.fromArray(data.position);a.group.rotation.y=data.yaw;
     a.group.scale.setScalar(data.scale??a.spec.scale??1);
-    a.velocity.fromArray(data.velocity);a.directed=data.directed;a.gesture=data.gesture;a.wp=data.wp;
+    a.velocity.fromArray(data.velocity);a.jumpState=data.jumpState?{...data.jumpState}:null;a.directed=data.directed;a.gesture=data.gesture;a.wp=data.wp;
     poseActor(a,data.clip,data.clipTime,data.layers);
   }
   worldTime=state.worldTime;snapOn=state.snapOn;controlled=state.controlled;controlMode=state.controlMode??(controlled?'character':'camera');selectedActor=state.selectedActor;
-  freeRig.pos.fromArray(state.free.position);freeRig.yaw=state.free.yaw;freeRig.pitch=state.free.pitch;
+  freeRig.pos.fromArray(state.free.position);freeRig.yaw=state.free.yaw;freeRig.pitch=state.free.pitch;freeRig.fov=state.free.fov??62;
   Object.assign(player,state.player);camIndex=SCENE.cameras.findIndex(c=>c.id===state.cameraId);
   importedAssets.splice(0,importedAssets.length,...state.imports);propAssets.splice(0,propAssets.length,...state.props);characterAssets.splice(0,characterAssets.length,...state.characters);
   // Undo affects scene edits; saved collection files remain available.
@@ -1742,6 +1873,7 @@ function undoRedo(redo=false) {
   if(recorder||loadingModels||clipDrag||timeline.mode==='recording'){hint('Stop recording or wait for the model before undoing.');return;}
   if(drag?.placing){cancelPlacement();return;}
   if(drag||look){hint('Finish the drag before undoing.');return;}
+  finishCameraNavigation();
   const label=redo?history.redo():history.undo();
   if(label)hint(`${redo?'Redid':'Undid'}: ${label}`);
 }
@@ -1767,7 +1899,7 @@ updateCamera();cameraEdit.add(0,describeCamera());
 refreshCast();
 renderLibrary();
 refreshPerformances();
-window.__studio = { cameraEdit, get previewEdit(){return previewEdit;}, transitions, renderer, scene, renderScene, timeline, actors, history, camera, freeRig, get camIndex() { return camIndex; }, get worldTime() { return worldTime; }, get controlled() { return controlled; }, get controlMode() { return controlMode; }, get ready() { return Object.keys(actors).length > 0; } };
+window.__studio = { cameraEdit, get previewEdit(){return previewEdit;}, transitions, renderer, scene, renderScene, timeline, actors, history, camera, freeRig, get camIndex() { return camIndex; }, get worldTime() { return worldTime; }, get controlled() { return controlled; }, get controlMode() { return controlMode; }, get mouseCaptured(){return nativeMouseCaptured||document.pointerLockElement===cv;}, get ready() { return Object.keys(actors).length > 0; } };
 let previousTime = performance.now();
 let accumulator = 0;
 function renderScene(){
