@@ -45,7 +45,13 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0",
-      "signingIdentity": "Developer ID Application: Sami Fouad (6LV9UQMTRU)"
+      "signingIdentity": "Developer ID Application: Sami Fouad (6LV9UQMTRU)",
+      "dmg": {
+        "background": "../design/installer-background.png",
+        "windowSize": { "width": 760, "height": 460 },
+        "appPosition": { "x": 190, "y": 250 },
+        "applicationFolderPosition": { "x": 570, "y": 250 }
+      }
     }
   },
   "plugins": {

@@ -15,7 +15,8 @@ if(command==='validate') {
   const platform=process.env.RELEASE_PLATFORM,spec=platforms[platform];
   if(!spec)throw Error('Unsupported release platform.');
   const signing=platform.startsWith('darwin')?{macOS:{signingIdentity:process.env.RELEASE_PUBLISH==='true'?config.bundle.macOS.signingIdentity:'-'}}:{};
-  const targets=platform.startsWith('darwin')?['app','dmg']:[platform.startsWith('win32')?'nsis':'appimage'];
+  // The macOS DMG is assembled from the signed app without automating Finder.
+  const targets=platform.startsWith('darwin')?['app']:[platform.startsWith('win32')?'nsis':'appimage'];
   await writeFile(join(root,'.tmp/release-config.json'),JSON.stringify({version:identity.version,bundle:{...signing,targets}}));
 } else if(command==='collect') {
   const platform=process.env.RELEASE_PLATFORM,spec=platforms[platform];

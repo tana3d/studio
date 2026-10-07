@@ -4,6 +4,14 @@ Pushing a stable version tag such as `v0.1.0` runs **Studio distribution** on
 the `studio-releases` self-hosted runner group. Bugsy builds Apple Silicon and
 Intel Mac targets; Demon builds Linux x64 and handles validation/publication.
 Windows releases are deferred until a Windows machine is available.
+Mac releases use the approved Tana T icon and the branded drag-to-Applications
+background from `design/`. After Tauri signs/notarizes the app and generates its
+signed updater archive, the release builds a DMG with hash-pinned `dmgbuild`,
+`ds-store` and `mac-alias` build tools. These tools write the Finder layout
+directly without GUI automation or permission prompts, and are not bundled in
+Studio. The DMG is signed and verified before collection; the signed app remains
+unchanged. Local Tauri builds use the same artwork and positions through
+`bundle.macOS.dmg` configuration.
 Normal branch pushes and pull requests run Public CI without releasing. The iMac is not registered for Studio. A manual run must select an
 existing version tag; **publish=false** builds test installers without importing
 signing credentials and never publishes them.

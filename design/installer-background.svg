@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="460" viewBox="0 0 760 460">
+  <defs>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M28 0H0V28" fill="none" stroke="#263b35" stroke-opacity=".065"/>
+    </pattern>
+  </defs>
+  <rect width="760" height="460" fill="#f1f4e9"/>
+  <rect width="760" height="460" fill="url(#grid)"/>
+  <path d="M0 0H253V5H0Z" fill="#249b43"/>
+  <path d="M253 0H507V5H253Z" fill="#eed442"/>
+  <path d="M507 0H760V5H507Z" fill="#d84438"/>
+  <text x="48" y="57" fill="#263b35" font-family="Menlo,monospace" font-size="16" font-weight="700">tana / studio</text>
+  <text x="380" y="112" text-anchor="middle" fill="#263b35" font-family="Helvetica,sans-serif" font-size="32" font-weight="700">Your world. Your story. Make it real.</text>
+  <text x="380" y="147" text-anchor="middle" fill="#61746b" font-family="Helvetica,sans-serif" font-size="17">Drag Studio into Applications to install.</text>
+  <rect x="114" y="182" width="152" height="152" rx="32" fill="#dbe5d6" stroke="#b8c9b4"/>
+  <rect x="494" y="182" width="152" height="152" rx="32" fill="#dbe5d6" stroke="#b8c9b4"/>
+  <path d="M317 250H443M421 228L443 250L421 272" fill="none" stroke="#263b35" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="380" y="408" text-anchor="middle" fill="#61746b" font-family="Menlo,monospace" font-size="13">Then open Studio from your Applications folder.</text>
+</svg>

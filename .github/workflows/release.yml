@@ -154,6 +154,12 @@ jobs:
             unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
           fi
           npm run tauri -- build --verbose --target "$RELEASE_TARGET" --config .tmp/release-config.json
+      - name: Create the branded macOS installer without Finder automation
+        if: runner.os == 'macOS'
+        run: |
+          python="$BUNDLE_ROOT/macos/Studio.app/Contents/Resources/converter/runtime/bin/python3"
+          "$python" -I -B -m pip install --no-compile --only-binary=:all: --require-hashes --target .tmp/dmg-tools -r scripts/dmg-requirements.txt
+          "$python" -I -B scripts/build-installer.py --bundle-root "$BUNDLE_ROOT" --target "$RELEASE_TARGET"
       - run: npm run check
       - name: Verify the bundled Blender converter
         run: |
@@ -178,6 +184,8 @@ jobs:
           codesign --verify --deep --strict "$BUNDLE_ROOT/macos/Studio.app"
           xcrun stapler validate "$BUNDLE_ROOT/macos/Studio.app"
           spctl --assess --type execute --verbose "$BUNDLE_ROOT/macos/Studio.app"
+          installer=$(find "$BUNDLE_ROOT/dmg" -maxdepth 1 -name "Studio_*.dmg" -type f)
+          codesign --verify --strict "$installer"
       - run: node scripts/release.mjs collect
       - name: Transfer signed installers to R2 staging
         env:
