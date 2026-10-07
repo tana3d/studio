@@ -19,6 +19,11 @@ The browser preview can browse the public catalog; saving to this collection req
 
 ## Development
 
+The app uses the approved Tana mark from `design/tana-icon.png`, matching the
+website's black 3D T with green, yellow and red sides. Regenerate the packaged
+PNG, macOS ICNS and Windows ICO files with
+`npm run tauri -- icon design/tana-icon.png --output src-tauri/icons`.
+
 Requires Node.js 24+, Rust 1.96, and the platform's Tauri build prerequisites.
 
 ```sh
